@@ -27,3 +27,7 @@ backend/data/
 *.db-shm
 .pytest_cache/
 node_modules/
+
+# keep the documented template even though real env files are ignored above
+!.env.example
+!**/.env.example
