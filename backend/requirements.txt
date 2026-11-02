@@ -1,0 +1,10 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30
+httpx>=0.27
+python-dotenv>=1.0
+sqlalchemy>=2.0,<2.2
+alembic>=1.13
+regex>=2024.5.15
+cryptography>=42
+python-multipart>=0.0.9
+psycopg[binary]>=3.1

@@ -1,0 +1,9 @@
+.git
+**/__pycache__
+**/.env
+**/.env.*
+!**/.env.example
+backend/data
+**/*.db*
+**/.pytest_cache
+backend/tests

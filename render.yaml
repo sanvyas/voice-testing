@@ -1,0 +1,19 @@
+# Render Blueprint for the Voice Test Lab: one web service, state in Postgres (Supabase or Render).
+# Single instance on purpose: the job runner is in-process.
+services:
+  - type: web
+    name: voice-lab
+    runtime: docker
+    plan: free                # "starter" keeps it awake; free sleeps after 15 minutes idle
+    region: singapore
+    healthCheckPath: /ready
+    autoDeploy: true
+    envVars:
+      - { key: APP_ENV, value: production }
+      - { key: DATABASE_URL, sync: false }        # postgresql://user:password@host:5432/db
+      - { key: DATABASE_SCHEMA, value: voice_lab } # keeps the lab's tables apart if the database is shared
+      - { key: GROQ_API_KEY, sync: false }
+      - { key: GROQ_MODEL, value: openai/gpt-oss-20b }
+      - { key: LAB_SECRET_KEY, generateValue: true }   # encrypts keys saved in Settings
+      - { key: LAB_API_TOKENS, generateValue: true }   # sign-in token (used unless LAB_OPEN_ACCESS=true)
+      - { key: LAB_OPEN_ACCESS, value: "false" }       # "true" turns lab sign-in off: anyone with the link gets in
