@@ -73,7 +73,7 @@ One FastAPI process (`backend/main.py`), one Postgres database, no build step on
 5. Run **one** instance: the job runner is in-process (state is in the DB; `Runner.recover` re-queues work after a restart).
 6. Shared database: all tables live in `DATABASE_SCHEMA`; the DB role must have no access to other apps' tables.
 7. Changing `models.py` needs `alembic revision --autogenerate`; a test fails if you forget. New NOT NULL columns need a `server_default`.
-8. Frontend: no `innerHTML` and no inline script/style (the CSP blocks them; tests enforce). Set styles with `el.style.setProperty`.
+8. Frontend: no `innerHTML` and no inline `<script>` (tests enforce both). The CSP also blocks inline `style=""` attributes (only the browser enforces that): set styles from JS with `el.style.setProperty`.
 9. Provider keys saved in Settings are encrypted (`secrets.py`, `LAB_SECRET_KEY`); client API keys are stored hashed.
 
 **Where to look**
