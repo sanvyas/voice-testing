@@ -1,4 +1,4 @@
-import { h, mount } from './ui.js';
+import { h, mount, toast, ask, ago } from './ui.js';
 import { api } from './api.js';
 
 const PENDING = ['queued', 'running', 'evaluating'];
@@ -53,4 +53,39 @@ export function conversationRow(c, { open = false, onToggle } = {}) {
   el.addEventListener('toggle', () => { onToggle && onToggle(el.open); if (el.open && !loaded) { loaded = true; load(); } });
   if (open) { loaded = true; load(); }
   return el;
+}
+
+/** Notes on a call: add while it is live or afterwards, edit, delete. Each note remembers where in the call it was written. */
+export function notesPanel(convId, initial = [], { onCount } = {}) {
+  const items = [...initial]; let editing = null;
+  const list = h('div', { class: 'stack', style: 'gap:8px' });
+  const input = h('textarea', { rows: 2, maxlength: 2000, 'aria-label': 'Add a note', placeholder: 'What do you notice? e.g. reply felt scripted, voice cut off, caller sounded calmer…', style: 'min-height:64px' });
+  const add = h('button', { class: 'go' }, 'Add note');
+  const where = (n) => (n.after_turn ? `After message ${n.after_turn}` : 'Before the first message');
+  const draw = () => {
+    mount(list, ...(items.length ? items.map(row) : [h('div', { class: 'small muted' }, 'No notes yet.')]));
+    onCount?.(items.length);
+  };
+  function row(n) {
+    if (editing === n.id) {
+      const box = h('textarea', { rows: 2, maxlength: 2000, 'aria-label': 'Edit note', style: 'min-height:64px' }, n.body);
+      return h('div', { class: 'note stack', style: 'gap:8px' }, box, h('div', { class: 'row' },
+        h('button', { class: 'go', onclick: async () => { try { Object.assign(n, await api(`/notes/${n.id}`, { method: 'PUT', body: { body: box.value } })); editing = null; draw(); } catch (e) { toast(e.message, true); } } }, 'Save'),
+        h('button', { class: 'link', onclick: () => { editing = null; draw(); } }, 'Cancel')));
+    }
+    return h('div', { class: 'note' }, h('div', { class: 'small muted' }, `${where(n)} · ${ago(n.created_at)}`), h('div', { class: 'notetext' }, n.body),
+      h('div', { class: 'row' }, h('button', { class: 'link', onclick: () => { editing = n.id; draw(); } }, 'Edit'),
+        h('button', { class: 'link danger', onclick: async () => { if (!(await ask('Delete this note?', { yes: 'Delete', danger: true }))) return; try { await api(`/notes/${n.id}`, { method: 'DELETE' }); items.splice(items.indexOf(n), 1); draw(); } catch (e) { toast(e.message, true); } } }, 'Delete')));
+  }
+  const submit = async () => {
+    const body = input.value.trim(); if (!body) return;
+    add.disabled = true;
+    try { items.push(await api(`/conversations/${convId}/notes`, { method: 'POST', body: { body } })); input.value = ''; draw(); }
+    catch (e) { toast(e.message, true); }
+    add.disabled = false;
+  };
+  add.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } });
+  draw();
+  return h('div', { class: 'stack' }, list, input, h('div', { class: 'row between' }, h('span', { class: 'small muted' }, 'Ctrl or Cmd + Enter to add'), add));
 }

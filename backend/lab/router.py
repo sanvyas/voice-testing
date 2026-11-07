@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 import llm
 from . import rules, schemas, service, sessions
 from .db import get_session
-from .models import Conversation, EvalParam, EvalSet, Prompt, PromptVersion, Scenario, TestRun, Turn, utcnow
+from .models import Conversation, EvalParam, EvalSet, Note, Prompt, PromptVersion, Scenario, TestRun, Turn, utcnow
 from .runner import Runner, refresh_run, run_db
 from .security import require_auth
 from .service import ServiceError, get_or_404
@@ -411,19 +411,45 @@ def list_conversations(
         query = query.where(or_(Conversation.title.ilike(like, escape="\\"), Conversation.prompt_label.ilike(like, escape="\\")))
     total = session.scalar(select(func.count()).select_from(query.subquery()))
     rows = session.scalars(query.order_by(Conversation.created_at.desc()).limit(limit).offset(offset)).all()
-    tc = service.turn_counts(session, [c.id for c in rows])
-    return {"total": total, "items": [service.conversation_summary(c, tc.get(c.id, 0)) for c in rows]}
+    ids = [c.id for c in rows]
+    tc, nc = service.turn_counts(session, ids), service.note_counts(session, ids)
+    return {"total": total, "items": [service.conversation_summary(c, tc.get(c.id, 0), nc.get(c.id, 0)) for c in rows]}
 
 
 @router.get("/conversations/{conversation_id}")
 def get_conversation(conversation_id: str, session: Session = Depends(get_session)):
     conv = session.scalars(
         select(Conversation).where(Conversation.id == conversation_id)
-        .options(selectinload(Conversation.turns), selectinload(Conversation.results))
+        .options(selectinload(Conversation.turns), selectinload(Conversation.results), selectinload(Conversation.notes))
     ).first()
     if conv is None:
         raise ServiceError("Conversation not found", 404)
     return service.conversation_detail(conv)
+
+
+# --- notes: observations on a call, while it is live or afterwards --------------------
+
+@router.post("/conversations/{conversation_id}/notes", status_code=201)
+def add_note(conversation_id: str, body: schemas.NoteIn, session: Session = Depends(get_session)):
+    conv = get_or_404(session, Conversation, conversation_id, "Conversation")
+    note = Note(conversation_id=conv.id, body=body.body, after_turn=service.turn_counts(session, [conv.id]).get(conv.id, 0))
+    session.add(note)
+    session.flush()
+    return service.note_out(note)
+
+
+@router.put("/notes/{note_id}")
+def edit_note(note_id: str, body: schemas.NoteIn, session: Session = Depends(get_session)):
+    note = get_or_404(session, Note, note_id, "Note")
+    note.body = body.body
+    session.flush()
+    return service.note_out(note)
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+def delete_note(note_id: str, session: Session = Depends(get_session)):
+    session.delete(get_or_404(session, Note, note_id, "Note"))
+    return Response(status_code=204)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
@@ -448,7 +474,7 @@ async def import_conversation(body: schemas.ImportConversation, request: Request
 def _conversation_detail(session: Session, cid: str) -> dict:
     conv = session.scalars(
         select(Conversation).where(Conversation.id == cid)
-        .options(selectinload(Conversation.turns), selectinload(Conversation.results))
+        .options(selectinload(Conversation.turns), selectinload(Conversation.results), selectinload(Conversation.notes))
     ).first()
     return service.conversation_detail(conv)
 

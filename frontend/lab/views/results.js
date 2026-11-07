@@ -1,6 +1,6 @@
 import { h, mount, toast, ask, ago, pct, sparkline } from '../ui.js';
 import { api } from '../api.js';
-import { kind, dotChar, why, isPending, checkList, transcript } from '../components.js';
+import { kind, dotChar, why, isPending, checkList, transcript, notesPanel } from '../components.js';
 
 export async function render(root, { params }) {
   return params[0] ? detail(root, params[0]) : list(root);
@@ -11,8 +11,8 @@ async function list(root) {
   const rows = [
     ...runs.items.map((r) => ({ type: 'test', id: r.id, at: r.created_at, title: r.name, sub: r.prompt_label, href: `#/test/${r.id}`,
       k: r.status !== 'completed' ? 'wait' : r.pass_rate === null ? 'warn' : r.pass_rate >= 80 ? 'pass' : 'fail', result: r.status !== 'completed' ? 'Running…' : `${r.counts.passed}/${r.counts.total} passed` })),
-    ...talks.items.map((c) => ({ type: 'talk', id: c.id, at: c.created_at, title: c.title, sub: c.prompt_label, href: `#/results/${c.id}`, k: kind(c), result: why(c) })),
-    ...apps.items.map((c) => ({ type: 'app', id: c.id, at: c.created_at, title: `${c.client || 'App'} user`, sub: `${c.environment} · ${c.prompt_label}`, href: `#/results/${c.id}`, k: kind(c), result: why(c) })),
+    ...talks.items.map((c) => ({ type: 'talk', id: c.id, at: c.created_at, title: c.title, sub: c.prompt_label + (c.note_count ? ` · ${c.note_count} note${c.note_count > 1 ? 's' : ''}` : ''), href: `#/results/${c.id}`, k: kind(c), result: why(c) })),
+    ...apps.items.map((c) => ({ type: 'app', id: c.id, at: c.created_at, title: `${c.client || 'App'} user`, sub: `${c.environment} · ${c.prompt_label}${c.note_count ? ` · ${c.note_count} note${c.note_count > 1 ? 's' : ''}` : ''}`, href: `#/results/${c.id}`, k: kind(c), result: why(c) })),
   ].sort((a, b) => (a.at < b.at ? 1 : -1));
   let tab = 'all';
   const box = h('div', { class: 'stack', style: 'gap:10px' });
@@ -50,6 +50,7 @@ async function detail(root, id) {
           : unscored || c.verdict === 'error' || c.status === 'error' ? h('button', { class: 'go', onclick: async () => { try { await api(`/conversations/${id}/reevaluate`, { method: 'POST', body: { eval_set_id: await evalId() } }); load(); } catch (e) { toast(e.message, true); } } }, unscored ? 'Score it now' : 'Try scoring again') : null),
       c.results.length ? h('div', { class: 'card' }, h('h2', {}, 'Checks'), checkList(c.results)) : null,
       h('div', { class: 'card' }, h('h2', {}, 'Conversation'), c.turns.length ? transcript(c.turns) : h('div', { class: 'muted' }, 'No messages.')),
+      h('div', { class: 'card stack' }, h('h2', { style: 'margin:0' }, 'Notes'), notesPanel(id, c.notes)),
       !isPending(c) ? h('div', { style: 'text-align:center' }, h('button', { class: 'link danger', onclick: async () => { if (await ask('Delete this conversation?', { yes: 'Delete', danger: true })) { await api(`/conversations/${id}`, { method: 'DELETE' }); location.hash = '#/results'; } } }, 'Delete')) : null);
     if (isPending(c)) timer = setTimeout(load, 1500);
   }

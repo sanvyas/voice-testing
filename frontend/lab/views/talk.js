@@ -1,6 +1,7 @@
 import { h, mount, toast, detectVariables } from '../ui.js';
 import { api, apiForm, getConfig } from '../api.js';
 import { saved, ensureVersion } from '../workspace.js';
+import { notesPanel } from '../components.js';
 import { creativityWord, lengthLabel } from '../style.js';
 import { LANGS, ENGINE_NAMES, makePlayer, voiceSettings } from '../voice.js';
 
@@ -151,7 +152,8 @@ export async function render(root) {
     stop.fn = () => { S.active = false; clearTimeout(S.timer); document.removeEventListener('visibilitychange', vis); try { S.rec && mode === 'browser' && S.rec.abort(); } catch { /* ignore */ } if (S.rec && S.rec.state === 'recording') { S.rec.discard = true; try { S.rec.stop(); } catch { /* ignore */ } } S.stream?.getTracks().forEach((t) => t.stop()); S.ctx?.close().catch(() => {}); S.lock?.release().catch(() => {}); window.speechSynthesis?.cancel(); player.stop(); };
     draw();
     mount(root, h('div', {}, h('h1', {}, 'Talking'), h('div', { class: 'muted' }, conv.scenario?.opening_message ? `You are the caller. Start with: “${conv.scenario.opening_message}”` : 'Speak naturally. It replies out loud.')),
-      h('div', { class: 'card stack' }, mode === 'typed' ? null : stage, label, chat, h('div', { class: 'row', style: 'flex-wrap:nowrap' }, typed, sendBtn)), doneBtn);
+      h('div', { class: 'card stack' }, mode === 'typed' ? null : stage, label, chat, h('div', { class: 'row', style: 'flex-wrap:nowrap' }, typed, sendBtn)),
+      h('div', { class: 'card stack' }, h('strong', {}, 'Your notes on this call'), notesPanel(conv.id, [])), doneBtn);
     say('idle', mode === 'typed' ? 'Type a message to begin' : 'Starting the microphone…');
     if (mode !== 'typed') again(300);
   }

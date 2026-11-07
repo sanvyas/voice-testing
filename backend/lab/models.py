@@ -174,6 +174,9 @@ class Conversation(Base):
     results: Mapped[list["EvalResult"]] = relationship(
         back_populates="conversation", order_by="EvalResult.position", cascade="all, delete-orphan"
     )
+    notes: Mapped[list["Note"]] = relationship(
+        back_populates="conversation", order_by="Note.created_at", cascade="all, delete-orphan"
+    )
 
 
 class Turn(Base):
@@ -189,6 +192,20 @@ class Turn(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     conversation: Mapped[Conversation] = relationship(back_populates="turns")
+
+
+class Note(Base):
+    """A human observation on a call, written while it happens or afterwards. ``after_turn`` is how many messages existed when it was written."""
+    __tablename__ = "notes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    after_turn: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    conversation: Mapped[Conversation] = relationship(back_populates="notes")
 
 
 class EvalResult(Base):

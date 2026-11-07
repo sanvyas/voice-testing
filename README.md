@@ -88,6 +88,7 @@ One FastAPI process (`backend/main.py`), one Postgres database, no build step on
 | Can't sign in / unexpected open access | `security.py`, `config.validate_for_startup` (`LAB_API_TOKENS`, `LAB_OPEN_ACCESS`) |
 | Data gone after a redeploy | `DATABASE_URL` missing: the "Temporary storage" banner shows |
 | Server voices (Google, Chatterbox): no sound, wrong voice, monthly limit | `tts.py` (vendor calls), `/speak` and `/settings/tts` in `admin_router.py`, usage counters in `settings_store.py`, `frontend/lab/voice.js` |
+| Call notes missing or wrong position | `Note` in `models.py` (migration `0003`), `/conversations/{id}/notes` in `router.py`, `notesPanel` in `frontend/lab/components.js` |
 | Mic or voice problems | `frontend/lab/views/talk.js` (silence detection), `/transcribe` in `admin_router.py` |
 | Schema or migration errors | `models.py`, `alembic/versions/`, `db.py` (schema and pool) |
 

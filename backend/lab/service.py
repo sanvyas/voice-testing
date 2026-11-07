@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from . import schemas
 from .config import Settings
 from .models import (
-    Conversation, EvalParam, EvalSet, Prompt, PromptVersion, Scenario, Setting, TestRun, Turn,
+    Conversation, EvalParam, EvalSet, Note, Prompt, PromptVersion, Scenario, Setting, TestRun, Turn,
 )
 from .templating import TemplateError, extract_variables, merge_values, render
 
@@ -114,6 +114,18 @@ def turn_out(t: Turn) -> dict:
     return {"idx": t.idx, "role": t.role, "content": t.content, "latency_ms": t.latency_ms, "created_at": iso(t.created_at)}
 
 
+def note_out(n) -> dict:
+    return {"id": n.id, "conversation_id": n.conversation_id, "body": n.body, "after_turn": n.after_turn, "created_at": iso(n.created_at), "updated_at": iso(n.updated_at)}
+
+
+def note_counts(session: Session, ids: Iterable[str]) -> dict[str, int]:
+    ids = list(ids)
+    if not ids:
+        return {}
+    rows = session.execute(select(Note.conversation_id, func.count()).where(Note.conversation_id.in_(ids)).group_by(Note.conversation_id)).all()
+    return {cid: n for cid, n in rows}
+
+
 def turn_counts(session: Session, ids: Iterable[str]) -> dict[str, int]:
     ids = list(ids)
     if not ids:
@@ -124,7 +136,7 @@ def turn_counts(session: Session, ids: Iterable[str]) -> dict[str, int]:
     return {cid: n for cid, n in rows}
 
 
-def conversation_summary(c: Conversation, turns: int | None = None) -> dict:
+def conversation_summary(c: Conversation, turns: int | None = None, notes: int | None = None) -> dict:
     return {
         "id": c.id, "run_id": c.run_id, "source": c.source, "status": c.status, "verdict": c.verdict,
         "score": c.score, "verdict_reason": c.verdict_reason, "error": c.error, "title": c.title,
@@ -132,7 +144,7 @@ def conversation_summary(c: Conversation, turns: int | None = None) -> dict:
         "scenario_id": c.scenario_id, "eval_set_id": c.eval_set_id,
         "evalset_name": (c.evalset_snapshot or {}).get("name", ""),
         "provider": c.provider, "model": c.model, "avg_latency_ms": c.avg_latency_ms,
-        "turn_count": turns, "created_at": iso(c.created_at), "finished_at": iso(c.finished_at),
+        "turn_count": turns, "note_count": notes, "created_at": iso(c.created_at), "finished_at": iso(c.finished_at),
         "client": c.client, "environment": c.environment, "user_ref": c.user_ref,
     }
 
@@ -142,7 +154,7 @@ def conversation_detail(c: Conversation) -> dict:
     out.update(
         rendered_prompt=c.rendered_prompt, variables=c.variables, scenario=c.scenario_snapshot,
         evalset=c.evalset_snapshot, gen_config=c.gen_config,
-        turns=[turn_out(t) for t in c.turns], results=[result_out(r) for r in c.results],
+        turns=[turn_out(t) for t in c.turns], results=[result_out(r) for r in c.results], notes=[note_out(n) for n in c.notes],
     )
     return out
 

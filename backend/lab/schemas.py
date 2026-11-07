@@ -283,3 +283,7 @@ class ImportConversation(Strict):
 
 class ReevaluateRequest(Strict):
     eval_set_id: str | None = None
+
+
+class NoteIn(Strict):
+    body: str = Field(min_length=1, max_length=2000)
