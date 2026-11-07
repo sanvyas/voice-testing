@@ -60,7 +60,7 @@ One FastAPI process (`backend/main.py`), one Postgres database, no build step on
 
 **Flows**
 - **Test run:** `POST /runs` → `service.create_run` snapshots prompt, moods, rubric into queued conversations → `runner.py` alternates the simulated caller (`simulator.py`) and the assistant → `evaluation.py` scores → UI polls `/runs/{id}`.
-- **Talk:** browser records → `/transcribe` (Whisper) → `/live/{id}/turns` → reply spoken by the device → `/finish` scores it.
+- **Talk:** browser records → `/transcribe` (Whisper) → `/live/{id}/turns` → reply spoken by the device, or by Google/Chatterbox via `/speak` (`tts.py`) → `/finish` scores it.
 - **App:** key → `/api/v1/sessions` uses the **release** of the key's environment → same `sessions.py` core as Talk.
 
 **Verdict** (`evaluation.compute_verdict`): a failed *must-pass* check fails it; an unscorable check gives `error` (never a silent pass); otherwise weighted score ≥ pass mark.
@@ -87,6 +87,7 @@ One FastAPI process (`backend/main.py`), one Postgres database, no build step on
 | App behaves differently from the lab | `release.py` (active deployment), `api_v1.py`, the key's environment |
 | Can't sign in / unexpected open access | `security.py`, `config.validate_for_startup` (`LAB_API_TOKENS`, `LAB_OPEN_ACCESS`) |
 | Data gone after a redeploy | `DATABASE_URL` missing: the "Temporary storage" banner shows |
+| Server voices (Google, Chatterbox): no sound, wrong voice, monthly limit | `tts.py` (vendor calls), `/speak` and `/settings/tts` in `admin_router.py`, usage counters in `settings_store.py`, `frontend/lab/voice.js` |
 | Mic or voice problems | `frontend/lab/views/talk.js` (silence detection), `/transcribe` in `admin_router.py` |
 | Schema or migration errors | `models.py`, `alembic/versions/`, `db.py` (schema and pool) |
 

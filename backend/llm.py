@@ -115,6 +115,11 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+def http_client() -> httpx.AsyncClient:
+    """The shared client, for sibling modules (tts.py) that call other vendors."""
+    return _get_client()
+
+
 async def close_client() -> None:
     global _client
     if _client is not None and not _client.is_closed:

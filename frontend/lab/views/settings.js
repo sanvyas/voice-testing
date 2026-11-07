@@ -1,6 +1,7 @@
 import { h, mount, toast, ask, field, ago } from '../ui.js';
 import { api, getConfig, setToken, hasToken } from '../api.js';
 import { styleControls } from '../style.js';
+import { LANGS, sampleFor, makePlayer, voiceSettings } from '../voice.js';
 
 const RULES = {  // plain-language switches that map onto the engine's exact checks
   spoken_length: ['Short replies (5 sentences max)', { rule: 'max_sentences_per_reply', max: 5, allow_violations: 1 }],
@@ -16,11 +17,11 @@ export async function render(root) {
   await load();
 
   async function load() {
-    const [cfg, providers, evalsets, active, keys, app, probe] = await Promise.all([getConfig(true), api('/settings/providers'), api('/eval-sets'), api('/deployments/active'), api('/api-keys'), api('/settings/app'),
+    const [cfg, providers, evalsets, active, keys, app, tts, probe] = await Promise.all([getConfig(true), api('/settings/providers'), api('/eval-sets'), api('/deployments/active'), api('/api-keys'), api('/settings/app'), voiceSettings(),
       api('/settings/providers/groq/test', { method: 'POST' }).catch((e) => ({ ok: false, message: e.message, models: {} }))]);
     const groq = providers.find((p) => p.id === 'groq');
     const style = await styleControls();
-    mount(box, statusCard(cfg, groq, probe, active), groqCard(groq, probe), h('div', { class: 'card stack' }, h('h2', { style: 'margin:0' }, 'How it talks'), h('div', { class: 'small muted' }, 'Saved as you change it. Applies to every new test and talk, and to what you publish next. Already-published prompts keep their saved values until you publish again.'), style), checksCard(evalsets[0]), appCard(cfg, active, keys, app, evalsets[0]), cfg.auth_required ? signOut() : null);
+    mount(box, statusCard(cfg, groq, probe, active), groqCard(groq, probe), voiceCard(tts), h('div', { class: 'card stack' }, h('h2', { style: 'margin:0' }, 'How it talks'), h('div', { class: 'small muted' }, 'Saved as you change it. Applies to every new test and talk, and to what you publish next. Already-published prompts keep their saved values until you publish again.'), style), checksCard(evalsets[0]), appCard(cfg, active, keys, app, evalsets[0]), cfg.auth_required ? signOut() : null);
     window.dispatchEvent(new Event('lab-config'));
   }
 
@@ -58,6 +59,49 @@ export async function render(root) {
       field('API key', key), p.configured ? field('Model', model, 'The model that talks to your callers and scores the conversations.') : null, btn, msg);
     return h('div', { class: 'card stack' }, h('h2', { style: 'margin:0' }, p.configured ? 'Groq key and model' : 'Connect Groq'),
       p.configured ? h('details', { class: 'more' }, h('summary', {}, 'Change key or model'), h('div', { style: 'margin-top:12px' }, form)) : form);
+  }
+
+  function voiceCard(v) {
+    const FIELD = { google: 'google_key', chatterbox: 'deepinfra_key' };
+    const KEYNAME = { google: 'google', chatterbox: 'deepinfra' };
+    const save = async (body, msg) => { try { await api('/settings/tts', { method: 'PUT', body }); if (msg) toast(msg); await load(); } catch (e) { toast(e.message, true); } };
+    const lang = h('select', { 'aria-label': 'Sample language', style: 'width:auto' }, ...LANGS.map(([c, l]) => h('option', { value: c }, l)));
+    const results = h('div', { class: 'stack', style: 'gap:4px', role: 'status' });
+    const player = makePlayer();
+    const say = (engine, text, bad = false) => { const line = results.querySelector(`[data-e="${engine}"]`) || results.appendChild(h('div', { class: 'small', 'data-e': engine })); line.textContent = text; line.style.color = bad ? 'var(--fail)' : ''; };
+    const sample = async (e) => {
+      player.unlock(); say(e.id, `${e.label}: creating…`);
+      try { const r = await player.say(sampleFor(lang.value), lang.value, e.id); say(e.id, `${e.label}: ${r.ms} ms to create · ${r.chars} characters · voice ${r.voice}`); await player.play(r.blob); }
+      catch (err) { say(e.id, `${e.label}: ${err.message}`, true); }
+    };
+    const ready = v.engines.filter((e) => e.configured);
+    const compare = h('button', { onclick: async () => { mount(results); for (const e of ready) await sample(e); } }, 'Hear both, one after the other');
+    const usage = (e) => h('div', { class: 'small muted' }, `This month: ${e.used_chars.toLocaleString()} characters`, e.free_left !== null ? ` · ${e.free_left.toLocaleString()} free left` : '',
+      ` · about $${e.estimated_cost_usd.toFixed(4)}`, e.reported_cost_usd ? ` · billed by the vendor: $${e.reported_cost_usd.toFixed(6)}` : '', ` · stops at ${e.cap_chars.toLocaleString()}`);
+    const blurb = { google: `$${v.engines[0].price_per_m} per 1M characters, the first ${v.engines[0].free_chars / 1e6}M each month are free. Ten Indian languages plus English. Standard and WaveNet voices.`,
+      chatterbox: `$${v.engines[1].price_per_m} per 1M characters. 23 languages, Hindi is the only Indian one. One default voice.` };
+    const row = (id, title, detail, body, e) => h('div', { class: 'stack', style: 'gap:8px;padding-top:12px;border-top:1px solid var(--line)' },
+      h('label', { class: 'row', style: 'gap:10px;font-weight:600' }, h('input', { type: 'radio', name: 'engine', checked: v.active === id, disabled: e ? !e.configured : false, onchange: () => save({ active: id }, 'Voice changed') }), title),
+      h('div', { class: 'small muted' }, detail), body);
+    const keyForm = (e) => {
+      const key = h('input', { type: 'password', autocomplete: 'off', placeholder: 'Paste API key', 'aria-label': `${e.label} API key` });
+      return h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'small muted' }, e.key_help), h('div', { class: 'row', style: 'flex-wrap:nowrap' }, h('div', { class: 'grow' }, key),
+        h('button', { class: 'go', onclick: () => (key.value.trim() ? save({ [FIELD[e.id]]: key.value }, `${e.label} connected`) : toast('Paste the key first', true)) }, 'Save key')));
+    };
+    const googleOptions = h('div', { class: 'row' },
+      h('select', { 'aria-label': 'Voice quality', onchange: (ev) => save({ google_tier: ev.target.value }) }, h('option', { value: 'Wavenet', selected: v.google_tier === 'Wavenet' }, 'WaveNet (more natural)'), h('option', { value: 'Standard', selected: v.google_tier === 'Standard' }, 'Standard (basic)')),
+      h('select', { 'aria-label': 'Voice', onchange: (ev) => save({ google_gender: ev.target.value }) }, h('option', { value: 'F', selected: v.google_gender === 'F' }, 'Female'), h('option', { value: 'M', selected: v.google_gender === 'M' }, 'Male')));
+    const engineRow = (e) => row(e.id, e.label, blurb[e.id], e.configured
+      ? h('div', { class: 'stack', style: 'gap:8px' }, usage(e), e.id === 'google' ? googleOptions : null,
+        h('div', { class: 'row' }, h('button', { onclick: () => sample(e) }, 'Play sample'),
+          e.source === 'ui' ? h('button', { class: 'link danger', onclick: async () => { await api(`/settings/tts/${KEYNAME[e.id]}/key`, { method: 'DELETE' }); load(); } }, 'Remove key') : h('span', { class: 'small muted' }, e.key_hint)))
+      : keyForm(e), e);
+    return h('div', { class: 'card stack' }, h('h2', { style: 'margin:0' }, 'Voice it speaks with'),
+      h('div', { class: 'small muted' }, 'Pick who reads the replies out loud on the Talk tab. Keys are stored encrypted. Each voice stops at a monthly limit so a test cannot run up a bill.'),
+      !v.can_store && !ready.length ? h('div', { class: 'notice' }, 'This server needs LAB_SECRET_KEY set before it can store keys.') : null,
+      row('device', 'Your device’s own voice', 'Free. Sounds like your phone or browser. Quality and languages depend on the device.', null),
+      ...v.engines.map(engineRow),
+      h('div', { class: 'row', style: 'padding-top:12px;border-top:1px solid var(--line)' }, h('span', { class: 'small muted' }, 'Try with'), lang, ready.length > 1 ? compare : null), results);
   }
 
   function checksCard(set) {

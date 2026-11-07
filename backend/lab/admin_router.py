@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import llm
+import tts
 from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -27,6 +28,20 @@ class ProviderUpdate(Strict):
     api_key: str | None = Field(default=None, max_length=600)
     model: str | None = Field(default=None, max_length=120)
     base_url: str | None = Field(default=None, max_length=300)
+
+
+class TtsUpdate(Strict):
+    active: str | None = None
+    google_tier: str | None = None
+    google_gender: str | None = None
+    google_key: str | None = Field(default=None, max_length=600)
+    deepinfra_key: str | None = Field(default=None, max_length=600)
+
+
+class SpeakRequest(Strict):
+    text: str = Field(min_length=1, max_length=20000)
+    language: str = Field(default="en-US", max_length=12)
+    engine: str | None = None  # default: the engine chosen in Settings
 
 
 class RolesUpdate(Strict):
@@ -123,6 +138,51 @@ def put_app_settings(body: AppSettingsUpdate, session: Session = Depends(get_ses
         get_or_404(session, EvalSet, body.eval_set_id, "Evaluation set")
     settings_store.put(session, "app", {"eval_set_id": body.eval_set_id})
     return {"eval_set_id": body.eval_set_id}
+
+
+# --- voice (text to speech) -----------------------------------------------------
+
+@router.get("/settings/tts")
+def get_tts(request: Request, session: Session = Depends(get_session)):
+    return settings_store.tts_status(session, _box(request))
+
+
+@router.put("/settings/tts")
+async def put_tts(body: TtsUpdate, request: Request):
+    box = _box(request)
+
+    def work(session: Session):
+        settings_store.save_tts(session, box, active=body.active, google_tier=body.google_tier, google_gender=body.google_gender,
+                                keys={"google": body.google_key or "", "deepinfra": body.deepinfra_key or ""})
+        settings_store.load_runtime(session, box)
+        return settings_store.tts_status(session, box)
+    return await run_db(work)
+
+
+@router.delete("/settings/tts/{name}/key", status_code=204)
+async def delete_tts_key(name: str, request: Request):
+    def work(session: Session):
+        settings_store.clear_tts_key(session, name)
+        settings_store.load_runtime(session, _box(request))
+    await run_db(work)
+    return Response(status_code=204)
+
+
+@router.post("/speak")
+async def speak(body: SpeakRequest, request: Request):
+    """Turn text into audio with the chosen engine. Counts characters against a monthly cap so a test cannot run up a bill."""
+    engine = body.engine or tts.active()
+    if engine not in tts.ENGINES:
+        raise ServiceError("This voice is played by your device. Choose Google or Chatterbox in Settings to hear it from the server.", 409)
+    text = tts.clean_text(body.text)
+    await run_db(lambda session: settings_store.tts_check_cap(session, engine, len(text)))
+    try:
+        speech = await tts.synthesize(engine, text, body.language)
+    except tts.TTSError as exc:
+        raise ServiceError(str(exc), 502) from None
+    await run_db(lambda session: settings_store.tts_record(session, engine, speech.chars, speech.cost_usd))
+    return Response(speech.audio, media_type=speech.mime, headers={
+        "X-TTS-Engine": speech.engine, "X-TTS-Voice": speech.voice, "X-TTS-Chars": str(speech.chars), "X-TTS-Latency-Ms": str(speech.latency_ms), "Cache-Control": "no-store"})
 
 
 # --- how the assistant talks ----------------------------------------------------

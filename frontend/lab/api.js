@@ -78,3 +78,19 @@ export async function apiForm(path, form) {
   }
   return res.json();
 }
+
+export async function apiBlob(path, body) {  // POST json, get audio back
+  const headers = { 'Content-Type': 'application/json' };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res;
+  try { res = await fetch(`/api/lab${path}`, { method: 'POST', headers, body: JSON.stringify(body) }); }
+  catch { throw new ApiError('Cannot reach the server. Check your connection.', 0); }
+  if (res.status === 401) { await askForToken(); return apiBlob(path, body); }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = formatDetail((await res.json()).detail); } catch { /* not json */ }
+    throw new ApiError(detail, res.status);
+  }
+  return { blob: await res.blob(), engine: res.headers.get('X-TTS-Engine') || '', voice: res.headers.get('X-TTS-Voice') || '', chars: +res.headers.get('X-TTS-Chars') || 0, ms: +res.headers.get('X-TTS-Latency-Ms') || 0 };
+}

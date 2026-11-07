@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 import llm
+import tts
 from .models import Setting, utcnow
 from .secrets import SecretBox
 from .service import ServiceError
@@ -92,6 +93,7 @@ def load_runtime(session: Session, box: SecretBox | None) -> dict[str, bool]:
             else:
                 unreadable[provider] = True
     llm.set_runtime(runtime)
+    tts.set_runtime(_tts_runtime(session, box))
     return unreadable
 
 
@@ -135,3 +137,100 @@ def save_roles(session: Session, roles: dict) -> None:
         if provider:
             clean[role] = {"provider": provider, "model": (item.get("model") or "").strip()[:120]}
     put(session, "roles", clean)
+
+
+# --- text to speech --------------------------------------------------------------
+
+TTS_KEY_NAMES = ("google", "deepinfra")
+
+
+def _tts_runtime(session: Session, box: SecretBox | None) -> dict:
+    stored = get(session, "tts", {}) or {}
+    keys = {}
+    for name, blob in (stored.get("keys_enc") or {}).items():
+        plain = box.decrypt(blob) if box else None
+        if plain:
+            keys[name] = plain
+    return {"keys": keys, "active": stored.get("active", "device"), "google_tier": stored.get("google_tier", "Wavenet"), "google_gender": stored.get("google_gender", "F")}
+
+
+def save_tts(session: Session, box: SecretBox | None, *, active: str | None, google_tier: str | None, google_gender: str | None, keys: dict[str, str]) -> None:
+    stored = dict(get(session, "tts", {}) or {})
+    if active is not None:
+        if active not in ("device", *tts.ENGINES):
+            raise ServiceError("Unknown voice engine", 422)
+        stored["active"] = active
+    if google_tier is not None:
+        if google_tier not in ("Wavenet", "Standard"):
+            raise ServiceError("Voice quality must be WaveNet or Standard", 422)
+        stored["google_tier"] = google_tier
+    if google_gender is not None:
+        if google_gender not in ("F", "M"):
+            raise ServiceError("Voice must be female (F) or male (M)", 422)
+        stored["google_gender"] = google_gender
+    enc = dict(stored.get("keys_enc") or {})
+    for name, raw in keys.items():
+        if name not in TTS_KEY_NAMES:
+            raise ServiceError("Unknown key", 422)
+        if not raw:
+            continue
+        if box is None:
+            raise ServiceError("Cannot store keys securely: set LAB_SECRET_KEY (32+ characters) in the server environment.", 409)
+        enc[name] = box.encrypt(clean_key(raw))
+    stored["keys_enc"] = enc
+    put(session, "tts", stored)
+
+
+def clear_tts_key(session: Session, name: str) -> None:
+    if name not in TTS_KEY_NAMES:
+        raise ServiceError("Unknown key", 404)
+    stored = dict(get(session, "tts", {}) or {})
+    enc = dict(stored.get("keys_enc") or {})
+    enc.pop(name, None)
+    stored["keys_enc"] = enc
+    put(session, "tts", stored)
+
+
+def _month() -> str:
+    return utcnow().strftime("%Y-%m")
+
+
+def tts_usage(session: Session) -> dict:
+    """Characters spoken this calendar month per engine (resets on the 1st, like Google's free quota)."""
+    usage = get(session, "tts.usage", {}) or {}
+    if usage.get("month") != _month():
+        usage = {"month": _month()}
+    return {"month": usage["month"], **{e: {"chars": 0, "calls": 0, "cost_usd": 0.0, **(usage.get(e) or {})} for e in tts.ENGINES}}
+
+
+def tts_check_cap(session: Session, engine: str, chars: int) -> None:
+    used = tts_usage(session)[engine]["chars"]
+    cap = tts.cap_chars(engine)
+    if used + chars > cap:
+        raise ServiceError(f"{tts.ENGINES[engine]['label']} reached its monthly limit of {cap:,} characters ({used:,} used). "
+                           f"This stops surprise bills. Raise it with the {tts.ENGINES[engine]['cap_env']} server setting.", 429)
+
+
+def tts_record(session: Session, engine: str, chars: int, cost_usd: float | None) -> None:
+    usage = tts_usage(session)
+    row = usage[engine]
+    row["chars"] += chars
+    row["calls"] += 1
+    row["cost_usd"] = round(row["cost_usd"] + (cost_usd or 0.0), 9)
+    put(session, "tts.usage", usage)
+
+
+def tts_status(session: Session, box: SecretBox | None) -> dict:
+    tts.set_runtime(_tts_runtime(session, box))
+    usage = tts_usage(session)
+    engines = tts.engine_status()
+    for e in engines:
+        u = usage[e["id"]]
+        billable = max(0, u["chars"] - e["free_chars"])
+        e["used_chars"], e["calls"] = u["chars"], u["calls"]
+        e["estimated_cost_usd"] = round(billable * e["price_per_m"] / 1e6, 4)
+        e["reported_cost_usd"] = u["cost_usd"] if u["cost_usd"] else None
+        e["free_left"] = max(0, e["free_chars"] - u["chars"]) if e["free_chars"] else None
+    return {"active": tts.active(), "google_tier": tts._runtime["google_tier"], "google_gender": tts._runtime["google_gender"],
+            "engines": engines, "month": usage["month"], "can_store": box is not None,
+            "chatterbox_languages": tts.CHATTERBOX_LANGS}

@@ -2,16 +2,18 @@ import { h, mount, toast, detectVariables } from '../ui.js';
 import { api, apiForm, getConfig } from '../api.js';
 import { saved, ensureVersion } from '../workspace.js';
 import { creativityWord, lengthLabel } from '../style.js';
+import { LANGS, ENGINE_NAMES, makePlayer, voiceSettings } from '../voice.js';
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const CAN_RECORD = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 const pickMime = () => ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
-const unlockAudio = () => { try { const u = new SpeechSynthesisUtterance(''); u.volume = 0; window.speechSynthesis.speak(u); } catch { /* not supported */ } };  // iOS needs a tap first
-const LANGS = [['en-IN', 'English (India)'], ['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['hi-IN', 'Hindi']];
+const unlockDevice = () => { try { const u = new SpeechSynthesisUtterance(''); u.volume = 0; window.speechSynthesis.speak(u); } catch { /* not supported */ } };  // iOS needs a tap first
 
 export async function render(root) {
   const stop = { fn: null };
-  const [cfg, prompts, scenarios, evalsets, open] = await Promise.all([getConfig(), api('/prompts'), api('/scenarios'), api('/eval-sets'), api('/conversations?status=live&source=live&limit=1')]);
+  const player = makePlayer();
+  const unlockAudio = () => { unlockDevice(); player.unlock(); };
+  const [cfg, prompts, scenarios, evalsets, open, voice] = await Promise.all([getConfig(), api('/prompts'), api('/scenarios'), api('/eval-sets'), api('/conversations?status=live&source=live&limit=1'), voiceSettings()]);
   const ws = saved();
   const gen = await api('/settings/generation');
   const prompt = await api(`/prompts/${prompts.some((p) => p.id === ws.promptId) ? ws.promptId : prompts[0].id}`);
@@ -23,6 +25,9 @@ export async function render(root) {
   const card = h('div', { class: 'small muted' });
   const lang = h('select', { 'aria-label': 'Language', style: 'width:auto' }, ...LANGS.map(([v, l]) => h('option', { value: v }, l)));
   const startBtn = h('button', { class: 'go' }, '🎙  Start talking');
+  const voiceHint = h('div', { class: 'small', style: 'color:var(--warn)' });
+  const checkVoice = () => { const code = lang.value.split('-')[0]; mount(voiceHint, voice.active === 'chatterbox' && !(code in voice.chatterbox_languages) ? `Chatterbox cannot speak this language. Replies will use your device voice.` : null); };
+  lang.addEventListener('change', checkVoice);
 
   const drawMoods = () => {
     mount(moodChips, h('span', { class: 'chip' + (!mood ? ' on' : ''), role: 'button', onclick: () => { mood = ''; drawMoods(); } }, 'Just talk'),
@@ -112,9 +117,17 @@ export async function render(root) {
       try { const r = await api(`/live/${conv.id}/turns`, { method: 'POST', body: { content: t } }); turns.push(r.user, r.assistant); draw(true); speak(r.assistant.content); }
       catch (e) { S.busy = false; sendBtn.disabled = false; say('idle', e.message, true); again(1200); }
     }
-    function speak(t) {
+    async function speak(t) {
       sendBtn.disabled = false;
       const done = () => { S.busy = false; draw(false); if (S.active) { say('idle', S.paused ? 'Paused. Tap the orb to resume.' : ''); again(450); } };
+      if (voice.active !== 'device') {  // Google or Chatterbox: the server makes the audio
+        try {
+          say('speaking', 'Preparing the voice…');
+          const r = await player.say(t, lang.value); if (!S.active) return;
+          say('speaking', `Speaking · ${ENGINE_NAMES[voice.active]} · ${r.ms} ms to create`);
+          await player.play(r.blob); if (!S.active) return; return done();
+        } catch (e) { if (!S.active) return; toast(`${e.message} Using your device voice for this reply.`, true); }
+      }
       if (!('speechSynthesis' in window)) return done();
       window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.lang = lang.value; u.rate = 0.96;
       u.onstart = () => say('speaking', 'Speaking…'); u.onend = done; u.onerror = done; window.speechSynthesis.speak(u);
@@ -128,14 +141,14 @@ export async function render(root) {
     });
     doneBtn.addEventListener('click', async () => {
       if (!turns.length) return toast('Say something first.', true);
-      S.finishing = true; doneBtn.disabled = true; stopListening(); window.speechSynthesis?.cancel();
+      S.finishing = true; doneBtn.disabled = true; stopListening(); window.speechSynthesis?.cancel(); player.stop();
       try { await api(`/live/${conv.id}/finish`, { method: 'POST', body: { eval_set_id: evalsets[0].id } }); location.hash = `#/results/${conv.id}`; }
       catch (e) { toast(e.message, true); S.finishing = false; doneBtn.disabled = false; }
     });
     const wake = async () => { try { S.lock = await navigator.wakeLock?.request('screen'); } catch { /* optional */ } };
     const vis = () => { if (document.visibilityState === 'visible' && S.active) wake(); };
     document.addEventListener('visibilitychange', vis); wake();
-    stop.fn = () => { S.active = false; clearTimeout(S.timer); document.removeEventListener('visibilitychange', vis); try { S.rec && mode === 'browser' && S.rec.abort(); } catch { /* ignore */ } if (S.rec && S.rec.state === 'recording') { S.rec.discard = true; try { S.rec.stop(); } catch { /* ignore */ } } S.stream?.getTracks().forEach((t) => t.stop()); S.ctx?.close().catch(() => {}); S.lock?.release().catch(() => {}); window.speechSynthesis?.cancel(); };
+    stop.fn = () => { S.active = false; clearTimeout(S.timer); document.removeEventListener('visibilitychange', vis); try { S.rec && mode === 'browser' && S.rec.abort(); } catch { /* ignore */ } if (S.rec && S.rec.state === 'recording') { S.rec.discard = true; try { S.rec.stop(); } catch { /* ignore */ } } S.stream?.getTracks().forEach((t) => t.stop()); S.ctx?.close().catch(() => {}); S.lock?.release().catch(() => {}); window.speechSynthesis?.cancel(); player.stop(); };
     draw();
     mount(root, h('div', {}, h('h1', {}, 'Talking'), h('div', { class: 'muted' }, conv.scenario?.opening_message ? `You are the caller. Start with: “${conv.scenario.opening_message}”` : 'Speak naturally. It replies out loud.')),
       h('div', { class: 'card stack' }, mode === 'typed' ? null : stage, label, chat, h('div', { class: 'row', style: 'flex-wrap:nowrap' }, typed, sendBtn)), doneBtn);
@@ -146,9 +159,10 @@ export async function render(root) {
   mount(root, h('div', {}, h('h1', {}, 'Talk to it'), h('div', { class: 'muted' }, `Uses the prompt you are working on (${prompt.name}).`), h('div', { class: 'small muted' }, `${creativityWord(gen.temperature)} · ${lengthLabel(gen.max_tokens)} replies · `, h('a', { href: '#/test' }, 'change'))),
     window.isSecureContext ? null : h('div', { class: 'notice' }, 'The microphone needs an https:// address. Open the lab over https on your phone.'),
     startBtn,
+    h('div', { class: 'small muted' }, 'Speaks with: ', h('strong', {}, voice.active === 'device' ? 'your device voice' : ENGINE_NAMES[voice.active]), ' · ', h('a', { href: '#/settings' }, 'change voice')), voiceHint,
     h('div', { class: 'row between' }, h('span', { class: 'small muted' }, mode === 'server' ? 'Voice: Whisper on Groq (works on iPhone and Android)' : mode === 'browser' ? 'Voice: your browser' : 'Voice off: connect Groq in Settings, or type'), lang),
     h('div', { class: 'card stack' }, h('strong', {}, 'Optional: pretend to be…'), moodChips, card),
     open.items.length ? h('div', { class: 'small muted' }, 'You have an unfinished talk. ', h('a', { href: `#/results/${open.items[0].id}` }, 'Open it')) : null);
-  drawMoods();
+  drawMoods(); checkVoice();
   return () => stop.fn && stop.fn();
 }

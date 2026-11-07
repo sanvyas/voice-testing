@@ -48,7 +48,7 @@ async def self_check() -> None:
 UI_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "lab"
 
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; "
     "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
 
