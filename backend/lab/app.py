@@ -46,6 +46,7 @@ async def self_check() -> None:
         logger.error("Self-check memory: could not run: %s", exc)
 
 UI_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "lab"
+ASSISTANT_UI_DIR = UI_DIR.parent / "assistant"
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; "
@@ -93,9 +94,9 @@ def install(app: FastAPI) -> None:
         path = request.url.path
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        if path.startswith("/api/lab"):
+        if path.startswith(("/api/lab", "/api/assistant", "/telephony")):
             response.headers["Cache-Control"] = "no-store"
-        if path.startswith("/lab"):
+        if path.startswith(("/lab", "/assistant")):
             response.headers["Content-Security-Policy"] = CSP
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Cache-Control"] = "no-cache"
@@ -128,5 +129,13 @@ def install(app: FastAPI) -> None:
     app.include_router(admin_router, prefix="/api/lab", tags=["lab"])
     app.include_router(v1_router, prefix="/api/v1")
 
+    from assistant.phone import router as phone_router
+    from assistant.router import router as assistant_router
+
+    app.include_router(assistant_router, prefix="/api/assistant", tags=["assistant"])
+    app.include_router(phone_router, tags=["telephony"])  # Plivo webhooks: checked by Plivo's signature, not the access token
+
     if UI_DIR.exists():
         app.mount("/lab", StaticFiles(directory=UI_DIR, html=True), name="lab-ui")
+    if ASSISTANT_UI_DIR.exists():
+        app.mount("/assistant", StaticFiles(directory=ASSISTANT_UI_DIR, html=True), name="assistant-ui")

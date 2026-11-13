@@ -272,3 +272,75 @@ class Deployment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
 
     prompt_version: Mapped[PromptVersion] = relationship()
+
+
+# --- AI call assistant (product) -------------------------------------------------------
+
+class Contact(Base):
+    """Someone the owner knows. ``always_ring`` contacts are never answered by the assistant."""
+    __tablename__ = "contacts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)  # E.164, e.g. +919876543210
+    always_ring: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    note: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Call(Base):
+    __tablename__ = "calls"
+    __table_args__ = (Index("ix_calls_started", "started_at"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    source: Mapped[str] = mapped_column(String(12), nullable=False)  # test (in the browser) | phone
+    handled_by: Mapped[str] = mapped_column(String(12), default="assistant", nullable=False)  # assistant | owner (always-ring contact)
+    status: Mapped[str] = mapped_column(String(12), default="live", nullable=False, index=True)  # live | done
+    caller_number: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    caller_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    contact_id: Mapped[str | None] = mapped_column(ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True)
+    provider_call_id: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True)  # Plivo CallUUID
+    importance: Mapped[str] = mapped_column(String(10), default="", nullable=False, index=True)  # action | fyi | ignore
+    category: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    action_items: Mapped[list] = mapped_column(JSON, default=list, nullable=False)  # [{id, text, done}]
+    callback_number: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    language: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    summary_error: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # the owner has dealt with it
+    duration_s: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # usage counters for the cost estimate, silent-turn counter
+    cost: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # estimated cost in rupees, by part
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    turns: Mapped[list["CallTurn"]] = relationship(back_populates="call", order_by="CallTurn.idx", cascade="all, delete-orphan")
+    notes: Mapped[list["CallNote"]] = relationship(back_populates="call", order_by="CallNote.created_at", cascade="all, delete-orphan")
+
+
+class CallTurn(Base):
+    __tablename__ = "call_turns"
+    __table_args__ = (UniqueConstraint("call_id", "idx", name="uq_call_turn_idx"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    call_id: Mapped[str] = mapped_column(ForeignKey("calls.id", ondelete="CASCADE"), nullable=False, index=True)
+    idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(12), nullable=False)  # caller | assistant
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    call: Mapped[Call] = relationship(back_populates="turns")
+
+
+class CallNote(Base):
+    """The owner's own observation on a call, written live or later."""
+    __tablename__ = "call_notes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    call_id: Mapped[str] = mapped_column(ForeignKey("calls.id", ondelete="CASCADE"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    after_turn: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    call: Mapped[Call] = relationship(back_populates="notes")

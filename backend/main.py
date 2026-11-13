@@ -68,10 +68,10 @@ async def production_release() -> tuple[str, dict]:
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """The bare address opens the testing lab."""
+    """The bare address opens the call assistant. The prompt testing lab lives at /lab/."""
     from fastapi.responses import RedirectResponse
 
-    return RedirectResponse("/lab/")
+    return RedirectResponse("/assistant/")
 
 
 @app.get("/app")
