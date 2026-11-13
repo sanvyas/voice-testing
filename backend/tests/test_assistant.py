@@ -608,3 +608,7 @@ def test_status_reports_mode_and_board(client, ai):
     add_item(client, "Kaju katli, 1 kg", "900", "sold_out")
     s = client.get(f"{API}/status").json()
     assert s["mode"] == "board" and s["board"] == {"items": 1, "sold_out": 1} and not s["whatsapp"]["connected"]
+
+
+def test_a_question_the_assistant_could_not_answer_always_needs_the_owner():
+    assert "could not answer itself" in prompts.SUMMARY_SYSTEM and "ALWAYS makes it" in prompts.SUMMARY_SYSTEM
