@@ -176,6 +176,8 @@ async def start_call(body: StartCall, request: Request):
         raise ServiceError("The assistant is switched off in Setup.", 409)
     if not llm.configured_providers():
         raise ServiceError("Connect your AI key in Setup first.", 409)
+    if not (profile["business_name"] and profile["owner_name"]):
+        raise ServiceError("Add your name and your business name in Setup first, so the assistant knows who it answers for.", 409)
 
     def work(session: Session):
         call, first = service.start_call(session, source="test", number=body.caller_number, name=body.caller_name)

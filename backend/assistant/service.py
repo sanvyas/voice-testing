@@ -311,6 +311,8 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         try:
             result = await llm.chat([{"role": "system", "content": prompts.SUMMARY_SYSTEM}, {"role": "user", "content": transcript}], temperature=0.1, max_tokens=900, retries=1)
             summary = parse_summary(result.reply)
+            if summary.importance == "action" and not summary.action_items:  # the owner must always get something to do
+                summary.action_items = [f"Follow up: {summary.summary}"[:300]]
         except Exception as exc:  # noqa: BLE001 - a failed summary must never lose the call
             logger.warning("summary failed for %s: %s", call_id, exc)
             error = f"The AI summary failed ({str(exc)[:120]}). Read the transcript."

@@ -58,7 +58,7 @@ SUMMARY_SYSTEM = f"""You write call notes for a busy small-business owner in Ind
 - "caller_name": the caller's name if they said it, else "".
 - "category": one of {list(CATEGORIES)}.
 - "importance": "action" if the owner must do something (call back, deliver, confirm, pay, resolve a complaint); "fyi" if it is useful to know but needs nothing; "ignore" for spam, wrong numbers, silence or sales pitches.
-- "action_items": a list of short strings, each a concrete thing for the owner to do (empty list if none). Include quantities, names and deadlines exactly as the caller said them.
+- "action_items": a list of short strings, each a concrete thing for the owner to do. If importance is "action" this list MUST have at least one item (for example "Deliver 20 packets of basmati rice to Vijay Nagar by tomorrow" or "Call Ravi back"). Include quantities, names and deadlines exactly as the caller said them. Empty only for "fyi" and "ignore".
 - "callback_number": a phone number the caller gave for calling back, digits only with country code if stated, else "".
 - "language": the main language the caller used, e.g. "Hindi", "English", "Hinglish".
 Use only facts that appear in the transcript. Never invent names, numbers, quantities or promises."""

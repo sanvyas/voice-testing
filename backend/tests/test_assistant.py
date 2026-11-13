@@ -140,6 +140,20 @@ def test_a_bad_summary_never_loses_the_call(client, ai):
     assert done["status"] == "done" and done["importance"] == "action" and "failed" in done["summary_error"] and len(done["turns"]) == 3
 
 
+def test_a_call_that_needs_action_always_has_something_to_do(client, ai):
+    profile(client)
+    cid = client.post(f"{API}/calls", json={}).json()["call"]["id"]
+    client.post(f"{API}/calls/{cid}/turns", json={"content": "I need rice"})
+    ai.summary_raw = json.dumps({**SUMMARY, "action_items": []})
+    done = client.post(f"{API}/calls/{cid}/end").json()
+    assert done["importance"] == "action" and [a["text"] for a in done["action_items"]] == ["Follow up: " + SUMMARY["summary"]]
+
+
+def test_a_practice_call_needs_the_business_to_be_described_first(client, ai):
+    r = client.post(f"{API}/calls", json={})
+    assert r.status_code == 409 and "business name" in r.json()["detail"]
+
+
 def test_summary_json_is_cleaned_and_bad_values_are_repaired():
     s = service.parse_summary('```json\n{"summary": "x", "category": "weird", "importance": "urgent", "action_items": ["a", "", 5], "language": "Hindi"}\n```')
     assert (s.category, s.importance, s.action_items) == ("other", "fyi", ["a", "5"])
