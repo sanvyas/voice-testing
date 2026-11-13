@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
-UIS = [FRONTEND / "lab", FRONTEND / "assistant"]
+UIS = [FRONTEND / "lab", FRONTEND / "assistant", FRONTEND / "portal"]
 FILES = sorted(f for ui in UIS for f in ui.rglob("*.js"))
 
 

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Munshi portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" />
+  <link rel="stylesheet" href="/assistant/assistant.css" />
+  <link rel="stylesheet" href="portal.css" />
+</head>
+<body class="portal">
+  <div id="portal">
+    <aside id="side"><div class="brandp"><i></i>Munshi <span>portal</span></div><nav id="sidenav" aria-label="Portal"></nav><div class="live" id="live"></div></aside>
+    <main id="pview" tabindex="-1"></main>
+  </div>
+  <div id="toasts" role="status" aria-live="polite"></div>
+  <div id="modal-root"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

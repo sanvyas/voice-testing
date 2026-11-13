@@ -48,6 +48,7 @@ class RolesUpdate(Strict):
     judge: dict = Field(default_factory=dict)
     simulator: dict = Field(default_factory=dict)
     stt: dict = Field(default_factory=dict)
+    vision: dict = Field(default_factory=dict)
 
 
 class AppSettingsUpdate(Strict):

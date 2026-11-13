@@ -7,7 +7,10 @@ Munshi answers the calls a shop owner, wholesaler or small factory misses. It ta
 | **Calls** | Calls that need you, a to-do list for each, the transcript, your own notes, and a one-tap Call back. |
 | **Try it** | Phone your own assistant from the browser as if you were a customer. Add notes while it happens. |
 | **Contacts** | People who always ring you (the AI does not answer them). Paste many at once. |
+| **Board** | What the assistant may say about prices and stock. Update it with a photo of your price list or shelf, by voice or typing ("toor dal 170 ho gayi"), or tap "Everything is the same as before". Prices not confirmed for 2 days (adjustable) are treated as "ask the owner". |
 | **Setup** | Your AI key, your business facts, the assistant's voice, and the Plivo phone line with the forwarding codes. |
+
+**The portal (`/portal/`)** is the control room on a bigger screen, directly connected to the app: Overview (what needs you), Knowledge (the board, photo reader, freshness window, questions callers asked that it could not answer), Prompts (greeting, extra instructions and call-note rules, with versions and one-click restore), Integrations (every connection with status, a live Test button and its settings), Costs (rupees per call and per day, a monthly budget with an optional hard stop) and Activity (who changed what). The photo reader needs a vision-capable model; choose it under Integrations. Call summaries are kept to a one-line gist plus short to-dos.
 
 The prompt testing lab that tunes the assistant's behaviour lives at `/lab/` (it was the first version of this repository, see below).
 
@@ -19,7 +22,7 @@ The prompt testing lab that tunes the assistant's behaviour lives at `/lab/` (it
 | `ASSISTANT_MAX_CALLS_PER_DAY` | Stops spam from spending money (default 200). One number can call at most 5 times in 10 minutes. |
 | `GOOGLE_TTS_API_KEY`, `DEEPINFRA_API_KEY`, `TTS_CAP_CHARS_*` | Voices and their monthly character limits (or paste the keys in Setup). |
 
-Code map: `backend/assistant/` (`service.py` call logic and summary, `prompts.py` everything the model is told, `router.py` the product API, `phone.py` Plivo webhooks), `frontend/assistant/`. Tests: `backend/tests/test_assistant.py`.
+Code map: `backend/assistant/` (`service.py` call logic and summary, `prompts.py` everything the model is told, `router.py` the product API, `phone.py` Plivo webhooks), `frontend/assistant/`. `frontend/portal/`, `assistant/vision.py` (photo reader), `assistant/costs.py`, `assistant/config.py` (budget, prompts, audit), `assistant/integrations.py`. Tests: `backend/tests/test_assistant.py`, `test_portal.py`.
 
 ---
 

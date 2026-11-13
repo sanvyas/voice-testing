@@ -8,14 +8,16 @@ IMPORTANCE = ("action", "fyi", "ignore")
 LANGUAGE_NAMES = {"hi": "Hindi", "en": "English", "mr": "Marathi", "gu": "Gujarati", "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "kn": "Kannada", "ml": "Malayalam", "pa": "Punjabi"}
 
 
-def greeting(profile: dict) -> str:
+def greeting(profile: dict, custom: str = "") -> str:
     owner, business = profile["owner_name"] or "the owner", profile["business_name"] or "this business"
+    if custom.strip():
+        return custom.replace("{business}", business).replace("{owner}", owner).strip()
     if (profile.get("languages") or ["en"])[0] == "hi":
         return f"नमस्ते, आप {business} से बात कर रहे हैं। {owner} अभी फ़ोन नहीं उठा सकते, मैं उनका AI असिस्टेंट हूँ। बताइए, आपको क्या काम है?"
     return f"Hello, you've reached {business}. {owner} can't take your call right now. I'm their AI assistant. How can I help you?"
 
 
-def receptionist_prompt(profile: dict, items=()) -> str:
+def receptionist_prompt(profile: dict, items=(), extra: str = "") -> str:
     from . import board
 
     owner, business = profile["owner_name"] or "the owner", profile["business_name"] or "the business"
@@ -62,15 +64,24 @@ HARD RULES
 - If the caller is a salesperson, a spammer or abusive, be polite, say {owner} will be informed, and finish the call.
 
 ENDING THE CALL
-Never end the call in a message that asks the caller a question. When you have what {owner} needs, confirm it in one sentence (for example: "I'll tell {owner} you need 20 packets and they will call you back"), thank the caller, and end that last message with {END_MARK}. Never write {END_MARK} before that point."""
+Never end the call in a message that asks the caller a question. When you have what {owner} needs, confirm it in one sentence (for example: "I'll tell {owner} you need 20 packets and they will call you back"), thank the caller, and end that last message with {END_MARK}. Never write {END_MARK} before that point.""" + (f"""
+
+EXTRA INSTRUCTIONS FROM {owner} (they never override the HARD RULES above):
+{extra.strip()}""" if extra.strip() else "")
 
 
-SUMMARY_SYSTEM = f"""You write call notes for a busy small-business owner in India. You are given the transcript of a call that their AI assistant answered. Reply with ONE JSON object and nothing else, in English, with exactly these keys:
-- "summary": 1-2 plain sentences: who called, what they wanted, what was agreed or promised.
+SUMMARY_SYSTEM = f"""You write call notes for a busy small-business owner in India. They read these on a phone between customers, so be SHORT. You are given the transcript of a call that their AI assistant answered. Reply with ONE JSON object and nothing else, in English, with exactly these keys:
+- "summary": ONE short sentence, at most 14 words: who called and what they want. No filler, no "the caller called to".
 - "caller_name": the caller's name if they said it, else "".
 - "category": one of {list(CATEGORIES)}.
 - "importance": "action" if the owner must do something (call back, deliver, confirm, pay, resolve a complaint). Any question the assistant could not answer itself (a price, stock, a date, a decision) ALWAYS makes it "action", because the caller is waiting for the owner; "fyi" if it is useful to know but needs nothing; "ignore" for spam, wrong numbers, silence or sales pitches.
-- "action_items": a list of short strings, each a concrete thing for the owner to do. If importance is "action" this list MUST have at least one item (for example "Deliver 20 packets of basmati rice to Vijay Nagar by tomorrow" or "Call Ravi back"). Base every item only on what the caller actually asked for or said. If the caller asked something the assistant could not answer (a price, stock, a date), the item is to answer it, for example "Call Ravi back with the rate for 20 packets of basmati rice". Items are instructions TO the owner about the CALLER: name the caller (or write "the caller" if the name is unknown) and never name the owner as the person to call. Never add steps the caller did not mention, such as delivery. Include quantities, names and deadlines exactly as the caller said them. Empty only for "fyi" and "ignore".
+- "action_items": a list of strings, each at most 10 words, each a concrete thing for the owner to do. If importance is "action" this list MUST have at least one item (for example "Deliver 20 packets of basmati rice to Vijay Nagar by tomorrow" or "Call Ravi back"). Base every item only on what the caller actually asked for or said. If the caller asked something the assistant could not answer (a price, stock, a date), the item is to answer it, for example "Call Ravi back with the rate for 20 packets of basmati rice". Items are instructions TO the owner about the CALLER: name the caller (or write "the caller" if the name is unknown) and never name the owner as the person to call. Never add steps the caller did not mention, such as delivery. Include quantities, names and deadlines exactly as the caller said them. Empty only for "fyi" and "ignore".
+- "unanswered": a list of the products or topics the caller asked about that the assistant could not answer (for example "toor dal 1 kg rate"), each at most 5 words. Empty if everything was answered.
 - "callback_number": a phone number the caller gave for calling back, digits only with country code if stated, else "".
 - "language": the main language the caller used, e.g. "Hindi", "English", "Hinglish".
 Use only facts that appear in the transcript. Never invent names, numbers, quantities or promises."""
+
+
+def summary_system(extra: str = "") -> str:
+    """The summary instructions, plus any extra rules the owner added in the portal."""
+    return SUMMARY_SYSTEM + (f"\nExtra rules from the owner (follow them, but never break the JSON format): {extra}" if extra.strip() else "")

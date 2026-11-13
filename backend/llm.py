@@ -18,7 +18,7 @@ logger = logging.getLogger("ai_therapy.llm")
 
 PROVIDER_ORDER = ("groq", "sarvam", "custom")
 DEFAULT_STT_MODEL = "whisper-large-v3-turbo"
-ROLES = ("judge", "simulator", "stt")
+ROLES = ("judge", "simulator", "stt", "vision")
 
 
 class LLMError(RuntimeError):

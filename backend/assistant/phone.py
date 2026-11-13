@@ -29,7 +29,7 @@ from lab.models import Call, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError
 
-from . import prompts, service
+from . import config, prompts, service
 
 logger = logging.getLogger("ai_therapy.assistant.phone")
 router = APIRouter()
@@ -142,7 +142,7 @@ async def answer(request: Request):
         today = session.scalar(select(func.count()).select_from(Call).where(Call.source == "phone", Call.started_at >= since)) or 0
         recent = session.scalar(select(func.count()).select_from(Call).where(Call.source == "phone", Call.caller_number == service._try_phone(caller),
                                                                                   Call.started_at >= utcnow() - timedelta(minutes=10))) if caller else 0
-        if today >= MAX_CALLS_PER_DAY or (recent or 0) >= MAX_CALLS_PER_CALLER_10MIN:
+        if today >= MAX_CALLS_PER_DAY or (recent or 0) >= MAX_CALLS_PER_CALLER_10MIN or config.over_budget(session):
             return profile, None, "limit"
         existing = session.scalar(select(Call).where(Call.provider_call_id == uuid)) if uuid else None
         if existing is not None:  # Plivo retried the webhook

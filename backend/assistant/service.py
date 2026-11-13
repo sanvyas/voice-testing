@@ -17,7 +17,7 @@ from lab.models import Call, CallNote, CallTurn, Contact, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, prompts, whatsapp
+from . import board, config, prompts, whatsapp
 
 logger = logging.getLogger("ai_therapy.assistant")
 
@@ -172,7 +172,7 @@ def start_call(session: Session, *, source: str, number: str = "", name: str = "
         session.add(call)
         session.flush()
         return call, ""
-    first = prompts.greeting(profile)
+    first = prompts.greeting(profile, config.get_prompts(session)["greeting"])
     call.turns.append(CallTurn(idx=1, role="assistant", content=first))
     session.add(call)
     session.flush()
@@ -206,7 +206,7 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
         if call.status != "live" or call.handled_by != "assistant":
             raise ServiceError("This call has ended.", 409)
         profile = get_profile(session)
-        return prompts.receptionist_prompt(profile, board.list_items(session)), _history(call), len(call.turns)
+        return prompts.receptionist_prompt(profile, board.shareable(session), config.get_prompts(session)["extra"]), _history(call), len(call.turns)
 
     system, history, count = await run_db(prepare)
     forced_end = count + 2 >= MAX_TURNS
@@ -249,7 +249,7 @@ async def send_reply_for_call(call_id: str) -> dict:
     def load(session: Session):
         call = load_call(session, call_id)
         creds = settings_store.get_whatsapp(session, SECRET_BOX)
-        return creds, call.caller_number, get_profile(session), board.list_items(session)
+        return creds, call.caller_number, get_profile(session), board.shareable(session)
 
     creds, number, profile, items = await run_db(load)
     result = await whatsapp.send_reply(creds, number, profile, items) if profile.get("whatsapp_on", True) else {"sent": False, "error": "Switched off in Setup.", "id": ""}
@@ -283,6 +283,22 @@ class Summary(BaseModel):
     action_items: list[str] = Field(default_factory=list)
     callback_number: str = ""
     language: str = ""
+    unanswered: list[str] = Field(default_factory=list)
+
+    @field_validator("summary")
+    @classmethod
+    def _short(cls, v: str) -> str:
+        v = re.sub(r"\s+", " ", v or "").strip()
+        if len(v) <= 160:
+            return v
+        cut = v[:160]
+        end = max(cut.rfind(". "), cut.rfind("; "))
+        return (cut[: end + 1] if end > 60 else cut.rsplit(" ", 1)[0] + "…")
+
+    @field_validator("unanswered", mode="before")
+    @classmethod
+    def _unanswered(cls, v):
+        return [re.sub(r"\s+", " ", str(x)).strip()[:60] for x in (v or []) if str(x).strip()][:8] if isinstance(v, list) else []
 
     @field_validator("category")
     @classmethod
@@ -332,14 +348,15 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
             return None
         creds = settings_store.get_whatsapp(session, SECRET_BOX)
         sendable = call.source == "phone" and bool(call.caller_number) and creds["access_token"] and creds["phone_number_id"] and not (call.meta or {}).get("whatsapp")
-        return _history(call), sum(1 for t in call.turns if t.role == "caller"), (creds, call.caller_number, get_profile(session), board.list_items(session)) if sendable else None
+        return _history(call), sum(1 for t in call.turns if t.role == "caller"), (creds, call.caller_number, get_profile(session), board.shareable(session), config.get_prompts(session)["summary_rules"]) if sendable else (None, None, None, None, config.get_prompts(session)["summary_rules"])
 
     data = await run_db(load)
     if data is None:
         return await run_db(lambda s: call_detail(load_call(s, call_id)))
     history, caller_turns, reply_ctx = data
+    summary_rules = reply_ctx[4]
     wa_result = None
-    if reply_ctx and reply_ctx[2].get("whatsapp_on", True):  # the instant WhatsApp reply, once per call
+    if reply_ctx[0] and reply_ctx[2].get("whatsapp_on", True):  # the instant WhatsApp reply, once per call
         wa_result = await whatsapp.send_reply(reply_ctx[0], reply_ctx[1], reply_ctx[2], reply_ctx[3])
     summary, error = Summary(), ""
     if caller_turns == 0:
@@ -347,7 +364,7 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
     else:
         transcript = "\n".join(f"{'ASSISTANT' if m['role'] == 'assistant' else 'CALLER'}: {m['content']}" for m in history)
         try:
-            result = await llm.chat([{"role": "system", "content": prompts.SUMMARY_SYSTEM}, {"role": "user", "content": transcript}], temperature=0.1, max_tokens=900, retries=1)
+            result = await llm.chat([{"role": "system", "content": prompts.summary_system(summary_rules)}, {"role": "user", "content": transcript}], temperature=0.1, max_tokens=900, retries=1)
             summary = parse_summary(result.reply)
             if summary.importance == "action" and not summary.action_items:  # the owner must always get something to do
                 summary.action_items = [f"Follow up: {summary.summary}"[:300]]
@@ -369,6 +386,8 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         call.language, call.summary_error = summary.language[:20], error
         if wa_result is not None:
             call.meta = {**(call.meta or {}), "whatsapp": wa_result}
+        if summary.unanswered:
+            call.meta = {**(call.meta or {}), "unanswered": summary.unanswered}
         call.cost = estimate_cost(call)
         session.flush()
         return call_detail(call)

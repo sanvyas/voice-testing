@@ -47,6 +47,7 @@ async def self_check() -> None:
 
 UI_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "lab"
 ASSISTANT_UI_DIR = UI_DIR.parent / "assistant"
+PORTAL_UI_DIR = UI_DIR.parent / "portal"
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; "
@@ -115,8 +116,8 @@ def install(app: FastAPI) -> None:
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         if path.startswith(("/api/lab", "/api/assistant", "/telephony")):
             response.headers["Cache-Control"] = "no-store"
-        if path.startswith(("/lab", "/assistant")):
-            response.headers["Content-Security-Policy"] = ASSISTANT_CSP if path.startswith("/assistant") else CSP
+        if path.startswith(("/lab", "/assistant", "/portal")):
+            response.headers["Content-Security-Policy"] = ASSISTANT_CSP if path.startswith(("/assistant", "/portal")) else CSP
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Cache-Control"] = "no-cache"
         return response
@@ -158,3 +159,5 @@ def install(app: FastAPI) -> None:
         app.mount("/lab", StaticFiles(directory=UI_DIR, html=True), name="lab-ui")
     if ASSISTANT_UI_DIR.exists():
         app.mount("/assistant", StaticFiles(directory=ASSISTANT_UI_DIR, html=True), name="assistant-ui")
+    if PORTAL_UI_DIR.exists():
+        app.mount("/portal", StaticFiles(directory=PORTAL_UI_DIR, html=True), name="portal-ui")

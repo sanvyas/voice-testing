@@ -356,3 +356,14 @@ class BoardItem(Base):
     status: Mapped[str] = mapped_column(String(12), default="in_stock", nullable=False)  # in_stock | sold_out | ask
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # when the owner last said "this is still true"
+
+
+class AuditEntry(Base):
+    """What changed in the portal or app configuration, and when. A plain trail, not security logging."""
+    __tablename__ = "audit_entries"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    area: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # business | board | prompts | integrations | budget | system
+    summary: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
