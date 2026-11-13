@@ -336,6 +336,22 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
     return await run_db(save)
 
 
+async def close_stale_calls(max_age_minutes: int = 60) -> int:
+    """Close calls nobody ended (closed tab, lost hangup callback). They get their summary like any other call."""
+    cutoff = utcnow() - timedelta(minutes=max_age_minutes)
+
+    def find(session: Session):
+        return list(session.scalars(select(Call.id).where(Call.status == "live", Call.handled_by == "assistant", Call.started_at < cutoff)))
+
+    ids = await run_db(find)
+    for cid in ids:
+        try:
+            await finish_call(cid)
+        except Exception:  # noqa: BLE001 - one bad call must not stop the sweep
+            logger.exception("could not close stale call %s", cid)
+    return len(ids)
+
+
 # --- lists and numbers -------------------------------------------------------------
 
 def list_calls(session: Session, *, importance: str | None, q: str | None, limit: int, offset: int, open_only: bool = False) -> dict:

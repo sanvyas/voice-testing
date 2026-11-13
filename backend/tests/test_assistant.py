@@ -370,3 +370,20 @@ def test_expired_audio_is_gone():
 def test_recordings_must_come_over_https():
     with pytest.raises(ValueError):
         asyncio.run(phone._download("http://169.254.169.254/latest"))
+
+
+def test_calls_left_open_are_closed_and_summarised(client, ai):
+    from datetime import timedelta
+
+    from lab import db
+    from lab.models import Call, utcnow
+
+    profile(client)
+    old = client.post(f"{API}/calls", json={}).json()["call"]["id"]
+    client.post(f"{API}/calls/{old}/turns", json={"content": "I need rice"})
+    fresh = client.post(f"{API}/calls", json={}).json()["call"]["id"]
+    with db.session_scope() as session:
+        session.get(Call, old).started_at = utcnow() - timedelta(hours=3)
+    assert asyncio.run(service.close_stale_calls()) == 1
+    closed = client.get(f"{API}/calls/{old}").json()
+    assert closed["status"] == "done" and closed["importance"] == "action" and client.get(f"{API}/calls/{fresh}").json()["status"] == "live"

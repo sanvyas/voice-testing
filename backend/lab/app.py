@@ -71,11 +71,25 @@ async def lab_lifespan(app: FastAPI):
     app.state.lab_runner = Runner(settings)
     await app.state.lab_runner.recover()
     check = asyncio.create_task(self_check())
+
+    async def sweep():  # calls left open for over an hour are closed and summarised
+        from assistant.service import close_stale_calls
+        while True:
+            try:
+                closed = await close_stale_calls()
+                if closed:
+                    logger.info("Closed %d call(s) that were left open", closed)
+            except Exception:  # noqa: BLE001
+                logger.exception("stale-call sweep failed")
+            await asyncio.sleep(600)
+
+    sweeper = asyncio.create_task(sweep())
     logger.info("Testing lab ready (env=%s, auth=%s)", settings.env, "on" if settings.api_tokens and not settings.open_access else "OFF")
     try:
         yield
     finally:
         check.cancel()
+        sweeper.cancel()
         await app.state.lab_runner.shutdown()
         await llm.close_client()
         db.dispose_db()
