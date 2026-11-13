@@ -344,3 +344,15 @@ class CallNote(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     call: Mapped[Call] = relationship(back_populates="notes")
+
+
+class BoardItem(Base):
+    """One line of "Today's board": what the owner is willing to have the assistant say about price and stock."""
+    __tablename__ = "board_items"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    price: Mapped[str] = mapped_column(String(40), default="", nullable=False)  # as the owner writes it, e.g. "Rs 450"
+    status: Mapped[str] = mapped_column(String(12), default="in_stock", nullable=False)  # in_stock | sold_out | ask
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

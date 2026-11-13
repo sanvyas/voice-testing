@@ -148,13 +148,22 @@ async def answer(request: Request):
         if existing is not None:  # Plivo retried the webhook
             return profile, (existing.id, ""), "retry"
         call, first = service.start_call(session, source="phone", number=caller, provider_call_id=uuid or None)
-        return profile, (call.id, first), "owner" if call.handled_by == "owner" else "ok"
+        if call.handled_by == "owner":
+            return profile, (call.id, first), "owner"
+        if call.status == "done":  # WhatsApp-only mode
+            wa = settings_store.get_whatsapp(session, request.app.state.lab_secret_box)
+            return profile, (call.id, ""), "reply" if (wa["access_token"] and wa["phone_number_id"] and profile.get("whatsapp_on", True)) else "reply_unsent"
+        return profile, (call.id, first), "ok"
 
     profile, opened, state = await run_db(open_call)
     lang = _language(profile)
     if state in ("off", "limit"):
         say = "The person you are calling is not available right now. Please try again later."
         return xml(await speak_xml(say, "en-IN", request), "<Hangup/>")
+    if state in ("reply", "reply_unsent"):
+        _spawn(service.send_reply_for_call(opened[0]))
+        say = "We could not take your call. We are sending you the details on WhatsApp." if state == "reply" else "We could not take your call. Please try again later."
+        return xml(await speak_xml(say, "en-IN", request, opened[0]), "<Hangup/>")
     if state == "owner":
         say = f"{profile['owner_name'] or 'The person you called'} is not available right now. Please try again in a little while."
         return xml(await speak_xml(say, "en-IN", request, opened[0]), "<Hangup/>")

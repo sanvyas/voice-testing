@@ -15,14 +15,25 @@ def greeting(profile: dict) -> str:
     return f"Hello, you've reached {business}. {owner} can't take your call right now. I'm their AI assistant. How can I help you?"
 
 
-def receptionist_prompt(profile: dict) -> str:
+def receptionist_prompt(profile: dict, items=()) -> str:
+    from . import board
+
     owner, business = profile["owner_name"] or "the owner", profile["business_name"] or "the business"
     langs = ", ".join(LANGUAGE_NAMES.get(c, c) for c in (profile.get("languages") or ["en"]))
-    facts = "\n".join(x for x in (
-        f"About the business: {profile['about']}" if profile["about"] else "",
-        f"Opening hours: {profile['hours']}" if profile["hours"] else "",
-        f"Prices, stock and common answers (the ONLY facts you may state):\n{profile['faq']}" if profile["faq"] else "",
-        f"Extra rules from {owner}: {profile['rules']}" if profile["rules"] else "") if x) or "No business facts were provided."
+    board_mode = profile.get("mode") == "board"
+    facts = [f"About the business: {profile['about']}" if profile["about"] else "",
+             f"Address: {profile['address']}" if profile.get("address") else "",
+             f"Opening hours: {profile['hours']}" if profile["hours"] else ""]
+    if board_mode:
+        lines = board.facts_for_prompt(list(items))
+        facts.append("Today's board: these are the ONLY prices and stock levels you may state, and they are current:\n" + (lines or "(the board is empty, so you know no prices)"))
+        if profile["faq"]:
+            facts.append(f"Other answers you may give:\n{profile['faq']}")
+    else:
+        facts.append("You do NOT know any prices or stock levels. Never state one. Take the message instead.")
+    if profile["rules"]:
+        facts.append(f"Extra rules from {owner}: {profile['rules']}")
+    know = "\n".join(x for x in facts if x)
     return f"""You are the AI phone assistant of {business}. {owner} cannot take this call, so you answer in their place. You are NOT {owner} and never pretend to be a person. If asked, say you are their AI assistant.
 
 Your job: find out who is calling and what they need, help only where it is safe, and make sure {owner} gets a clear message.
@@ -31,6 +42,7 @@ HOW YOU TALK
 - This is a phone call. Reply in 1-3 short sentences, under 40 words. Plain spoken words. No lists, markdown or emojis. One question at a time.
 - Reply in the caller's language. Callers may speak {langs}, or a mix such as Hinglish. Match their mix and their politeness. Use "आप" style respect in Hindi.
 - Be warm and natural, not scripted. Do not repeat the same phrase every turn.
+- The line may be noisy. If a name, item or quantity is unclear, repeat it back to confirm before moving on.
 
 WHAT TO FIND OUT
 - The caller's name, what they want, and how urgent it is.
@@ -38,11 +50,11 @@ WHAT TO FIND OUT
 - Whether {owner} should call back on the number they are calling from.
 
 WHAT YOU KNOW
-{facts}
+{know}
 - If you are asked a price, stock level, discount, delivery date or anything not listed above, say you will pass the question to {owner} so they call back with the right answer. Never guess these.
 
 HARD RULES
-- Never promise anything on {owner}'s behalf: no prices, discounts, deadlines, refunds or payments.
+- Never promise anything on {owner}'s behalf: no discounts, deadlines, refunds or payments.
 - Never give out information about other customers or about {owner}.
 - Never take card numbers, OTPs, PINs or passwords. If the caller starts to share one, stop them politely and say not to share it.
 - If the caller is angry, acknowledge it in a few words, collect the details, and promise only that {owner} will be told.

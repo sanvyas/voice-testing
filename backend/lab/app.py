@@ -53,6 +53,9 @@ CSP = (
     "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
 
+# The assistant app uses Google Fonts (Inter, Space Grotesk); everything else stays on this server.
+ASSISTANT_CSP = CSP.replace("style-src 'self';", "style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com;")
+
 
 @asynccontextmanager
 async def lab_lifespan(app: FastAPI):
@@ -64,6 +67,8 @@ async def lab_lifespan(app: FastAPI):
             seed_defaults(session)
     app.state.lab_settings = settings
     app.state.lab_secret_box = load_box(settings.secret_key, settings.database_url)
+    from assistant import service as assistant_service
+    assistant_service.SECRET_BOX = app.state.lab_secret_box
     with db.session_scope() as session:  # provider keys / role models saved through the Settings page
         unreadable = settings_store.load_runtime(session, app.state.lab_secret_box)
     if unreadable:
@@ -111,7 +116,7 @@ def install(app: FastAPI) -> None:
         if path.startswith(("/api/lab", "/api/assistant", "/telephony")):
             response.headers["Cache-Control"] = "no-store"
         if path.startswith(("/lab", "/assistant")):
-            response.headers["Content-Security-Policy"] = CSP
+            response.headers["Content-Security-Policy"] = ASSISTANT_CSP if path.startswith("/assistant") else CSP
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Cache-Control"] = "no-cache"
         return response

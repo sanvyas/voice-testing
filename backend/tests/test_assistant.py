@@ -96,7 +96,7 @@ def test_contacts_import_duplicates_and_always_ring(client):
 # --- a call from start to summary --------------------------------------------------------
 
 def test_a_full_call_is_answered_summarised_and_listed(client, ai):
-    profile(client)
+    profile(client, mode="board")
     start = client.post(f"{API}/calls", json={"caller_number": "98765 43210"}).json()
     cid = start["call"]["id"]
     assert not start["routed_to_owner"] and "AI assistant" in start["greeting"] and "Sharma Traders" in start["greeting"]
@@ -223,7 +223,7 @@ def test_notes_on_calls_live_and_afterwards(client, ai):
 
 
 def test_the_prompt_never_lets_the_assistant_invent_or_take_secrets():
-    p = prompts.receptionist_prompt({**service.DEFAULT_PROFILE, "owner_name": "Ramesh", "business_name": "Sharma Traders", "faq": "Rice Rs 90"})
+    p = prompts.receptionist_prompt({**service.DEFAULT_PROFILE, "owner_name": "Ramesh", "business_name": "Sharma Traders", "faq": "Rice Rs 90", "mode": "board"})
     for must in ("AI assistant", "Never guess", "Never promise", "OTPs", "112", prompts.END_MARK):
         assert must in p
     assert "Rice Rs 90" in p and "Hindi" in p
@@ -395,3 +395,216 @@ def test_the_assistant_never_hangs_up_on_its_own_question(client, ai):
     cid = client.post(f"{API}/calls", json={}).json()["call"]["id"]
     t = client.post(f"{API}/calls/{cid}/turns", json={"content": "I need rice"}).json()
     assert t["ended"] is False and t["assistant"]["content"].endswith("?") and "<<END>>" not in t["assistant"]["content"]
+
+
+# --- Today's board, modes and the WhatsApp reply -------------------------------------------
+
+def add_item(client, name, price="", status="in_stock"):
+    r = client.post(f"{API}/board", json={"name": name, "price": price, "status": status})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_board_items_can_be_added_changed_and_removed(client):
+    a = add_item(client, "Basmati rice, 5 kg", "450")
+    assert a["price"] == "Rs 450" and a["status"] == "in_stock"
+    assert client.post(f"{API}/board", json={"name": "basmati RICE, 5 kg"}).status_code == 409  # same item twice
+    assert client.put(f"{API}/board/{a['id']}", json={"status": "sold_out", "price": "₹ 480"}).json()["price"] == "Rs 480"
+    board = client.get(f"{API}/board").json()
+    assert board["sold_out"] == 1 and board["items"][0]["status"] == "sold_out" and board["updated_at"]
+    assert client.put(f"{API}/board/{a['id']}", json={"status": "gone"}).status_code == 422
+    assert client.delete(f"{API}/board/{a['id']}").status_code == 204 and client.get(f"{API}/board").json()["items"] == []
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("kaju katli khatam", {"Kaju katli, 1 kg": "sold_out"}),
+    ("Toor dal aa gayi", {"Toor dal, 1 kg": "in_stock"}),
+    ("kaju katli khatam, toor dal sold out", {"Kaju katli, 1 kg": "sold_out", "Toor dal, 1 kg": "sold_out"}),
+    ("sugar ask me", {"Sugar, 50 kg bag": "ask"}),
+    ("kaju katli nahi hai aur sugar available", {"Kaju katli, 1 kg": "sold_out", "Sugar, 50 kg bag": "in_stock"}),
+])
+def test_saying_it_updates_the_board(client, text, expected):
+    for name, price in (("Kaju katli, 1 kg", "900"), ("Toor dal, 1 kg", "160"), ("Sugar, 50 kg bag", "2150")):
+        add_item(client, name, price)
+    out = client.post(f"{API}/board/say", json={"text": text}).json()
+    got = {i["name"]: i["status"] for i in out["board"]["items"]}
+    for name, status in expected.items():
+        assert got[name] == status
+    assert out["unmatched"] == []
+
+
+def test_saying_something_it_cannot_place_changes_nothing(client):
+    add_item(client, "Toor dal, 1 kg", "160")
+    add_item(client, "Moong dal, 1 kg", "140")
+    out = client.post(f"{API}/board/say", json={"text": "chai patti khatam, dal khatam, hello there"}).json()
+    assert out["changed"] == [] and len(out["unmatched"]) == 3  # "dal" matches two items equally: it asks instead of guessing
+    assert all(i["status"] == "in_stock" for i in out["board"]["items"])
+
+
+def test_a_pasted_price_list_becomes_board_items(client):
+    r = client.post(f"{API}/board/import", json={"text": "Basmati rice 5 kg - Rs 450\nToor dal: 160\n• Sugar\nOil 1 litre ₹ 140\n\nToor dal 160"}).json()
+    assert r["added"] == 4 and len(r["skipped"]) == 1
+    items = {i["name"]: i["price"] for i in client.get(f"{API}/board").json()["items"]}
+    assert items["Basmati rice 5 kg"] == "Rs 450" and items["Toor dal"] == "Rs 160" and items["Sugar"] == "" and items["Oil 1 litre"] == "Rs 140"
+
+
+def test_in_board_mode_the_assistant_may_state_only_what_is_on_the_board(client, ai):
+    add_item(client, "Basmati rice, 5 kg", "450")
+    add_item(client, "Kaju katli, 1 kg", "900", "sold_out")
+    add_item(client, "Sugar, 50 kg bag", "2150", "ask")
+    profile(client, mode="board", address="12 Market Road")
+    cid = client.post(f"{API}/calls", json={}).json()["call"]["id"]
+    client.post(f"{API}/calls/{cid}/turns", json={"content": "rate kya hai"})
+    system = ai.calls[0][0]["content"]
+    assert "Basmati rice, 5 kg: Rs 450, in stock" in system and "Kaju katli, 1 kg: sold out today" in system and "Sugar, 50 kg bag: do NOT state price or stock" in system and "12 Market Road" in system
+
+
+def test_in_message_mode_the_assistant_knows_no_prices_at_all(client, ai):
+    add_item(client, "Basmati rice, 5 kg", "450")
+    profile(client, mode="message", faq="Rice Rs 90")
+    cid = client.post(f"{API}/calls", json={}).json()["call"]["id"]
+    client.post(f"{API}/calls/{cid}/turns", json={"content": "rate kya hai"})
+    system = ai.calls[0][0]["content"]
+    assert "You do NOT know any prices or stock levels" in system and "Rs 450" not in system and "Rice Rs 90" not in system
+
+
+def test_whatsapp_only_mode_shows_the_reply_instead_of_starting_a_call(client, ai):
+    add_item(client, "Basmati rice, 5 kg", "450")
+    add_item(client, "Kaju katli, 1 kg", "900", "sold_out")
+    profile(client, mode="reply", address="12 Market Road", hours="9am to 8pm")
+    r = client.post(f"{API}/calls", json={}).json()
+    assert r["reply_only"] is True and r["call"] is None
+    for must in ("Sharma Traders", "12 Market Road", "9am to 8pm", "Basmati rice, 5 kg Rs 450", "Kaju katli, 1 kg Rs 900 (sold out)"):
+        assert must in r["preview"]
+    assert len(ai.calls) == 0
+
+
+def test_message_mode_reply_leaves_prices_out(client, ai):
+    profile(client, mode="message", address="12 Market Road")
+    add_item(client, "Basmati rice, 5 kg", "450")
+    preview = client.post(f"{API}/calls", json={}).json()
+    assert preview["greeting"] and "Rs 450" not in whatsapp_preview(client)
+
+
+def whatsapp_preview(client):
+    from assistant import whatsapp
+    from lab import db
+    from lab.models import BoardItem
+    from sqlalchemy import select
+    with db.session_scope() as session:
+        return whatsapp.preview(service.get_profile(session), list(session.scalars(select(BoardItem))))
+
+
+def wa_transport(seen, status=200, body=None):
+    def handler(req):
+        seen.append(req)
+        if req.url.host == "graph.facebook.com":
+            return httpx.Response(status, json=body or {"messages": [{"id": "wamid.TEST"}]})
+        return httpx.Response(404)
+    llm.set_transport(httpx.MockTransport(handler))
+
+
+def connect_whatsapp(client):
+    r = client.put(f"{API}/whatsapp", json={"phone_number_id": "123456789012345", "access_token": "EAAGtesttoken123", "template": "missed_call_reply", "language": "en"})
+    assert r.status_code == 200 and r.json()["connected"] and "EAAGtest" not in r.text
+    return r.json()
+
+
+def test_whatsapp_settings_are_validated_and_the_token_is_never_returned(client):
+    assert client.put(f"{API}/whatsapp", json={"phone_number_id": "abc"}).status_code == 422
+    assert client.put(f"{API}/whatsapp", json={"template": "Has Spaces"}).status_code == 422
+    assert client.put(f"{API}/whatsapp", json={"language": "english"}).status_code == 422
+    connect_whatsapp(client)
+    status = client.get(f"{API}/status").json()["whatsapp"]
+    assert status["connected"] and status["token_saved"] and "template_body" in status and "EAAGtest" not in json.dumps(status)
+    assert client.delete(f"{API}/whatsapp").status_code == 204 and not client.get(f"{API}/status").json()["whatsapp"]["connected"]
+
+
+def test_a_test_whatsapp_goes_to_the_owner_with_the_real_template(client):
+    seen = []
+    wa_transport(seen)
+    profile(client, owner_phone="98111 11111", mode="board", address="12 Market Road")
+    add_item(client, "Basmati rice, 5 kg", "450")
+    connect_whatsapp(client)
+    assert client.post(f"{API}/whatsapp/test").json() == {"sent": True, "to": "+919811111111"}
+    req = seen[0]
+    sent = json.loads(req.content)
+    assert req.url.path == "/v21.0/123456789012345/messages" and req.headers["authorization"] == "Bearer EAAGtesttoken123"
+    assert sent["to"] == "919811111111" and sent["type"] == "template" and sent["template"]["name"] == "missed_call_reply"
+    params = [p["text"] for p in sent["template"]["components"][0]["parameters"]]
+    assert params[0] == "Sharma Traders" and "12 Market Road" in params[1] and "Basmati rice, 5 kg Rs 450" in params[1] and "\n" not in params[1]
+
+
+def test_whatsapp_errors_are_explained(client):
+    seen = []
+    wa_transport(seen, status=400, body={"error": {"message": "(#132001) Template name does not exist in the translation"}})
+    profile(client, owner_phone="98111 11111")
+    connect_whatsapp(client)
+    r = client.post(f"{API}/whatsapp/test")
+    assert r.status_code == 502 and "Template name does not exist" in r.json()["detail"]
+    assert client.delete(f"{API}/whatsapp").status_code == 204
+    r = client.post(f"{API}/whatsapp/test")
+    assert r.status_code == 502 and "not connected" in r.json()["detail"]
+
+
+def test_a_phone_call_that_ends_sends_the_whatsapp_reply_once_and_costs_it(line, ai, monkeypatch):
+    seen = []
+    wa_transport(seen)
+    line.put(f"{API}/profile", json={"business_name": "Sharma Traders", "owner_name": "Ramesh", "languages": ["en"], "mode": "message"})
+    connect_whatsapp(line)
+    r = signed(line, "/telephony/plivo/answer", {"CallUUID": "wa-1", "From": "+919876543210", "To": "+918047112233"})
+    call_id = r.text.split("call=")[1].split('"')[0]
+
+    async def fake_download(url):
+        return b"x" * 4000
+
+    async def fake_transcribe(audio, filename, content_type, **kw):
+        return llm.Transcript("mujhe chawal chahiye", "Groq", "whisper", 300)
+
+    monkeypatch.setattr(phone, "_download", fake_download)
+    monkeypatch.setattr(llm, "transcribe", fake_transcribe)
+    signed(line, "/telephony/plivo/turn", {"CallUUID": "wa-1", "RecordUrl": "https://media.plivo.com/r.mp3", "RecordingDuration": "5"}, query=f"call={call_id}")
+    signed(line, "/telephony/plivo/hangup", {"CallUUID": "wa-1", "Duration": "40"})
+    done = None
+    for _ in range(80):
+        done = line.get(f"{API}/calls/{call_id}").json()
+        if done["status"] == "done":
+            break
+        time.sleep(0.05)
+    assert done["status"] == "done" and done["whatsapp"]["sent"] is True and done["cost"]["whatsapp"] == pytest.approx(0.13)
+    assert len([r for r in seen if r.url.host == "graph.facebook.com"]) == 1 and json.loads(seen[0].content)["to"] == "919876543210"
+
+
+def test_in_whatsapp_only_mode_a_phone_call_is_a_polite_hangup_plus_a_reply(line, ai):
+    seen = []
+    wa_transport(seen)
+    line.put(f"{API}/profile", json={"business_name": "Sharma Traders", "owner_name": "Ramesh", "languages": ["en"], "mode": "reply", "address": "12 Market Road"})
+    connect_whatsapp(line)
+    r = signed(line, "/telephony/plivo/answer", {"CallUUID": "wa-2", "From": "+919876543210"})
+    assert "sending you the details on WhatsApp" in r.text and "<Hangup/>" in r.text and "<Record " not in r.text
+    row = None
+    for _ in range(80):
+        row = next(iter(line.get(f"{API}/calls").json()["items"]), None)
+        if row and "WhatsApp reply" in row["summary"]:
+            break
+        time.sleep(0.05)
+    assert row and row["importance"] == "fyi" and len(ai.calls) == 0 and len(seen) == 1
+
+
+def test_without_whatsapp_a_reply_only_caller_is_told_to_try_later(line, ai):
+    line.put(f"{API}/profile", json={"business_name": "Sharma Traders", "owner_name": "Ramesh", "languages": ["en"], "mode": "reply"})
+    r = signed(line, "/telephony/plivo/answer", {"CallUUID": "wa-3", "From": "+919876543210"})
+    assert "try again later" in r.text and "WhatsApp" not in r.text
+
+
+def test_the_sample_shop_fills_an_empty_app_and_never_overwrites_real_details(client):
+    r = client.post(f"{API}/demo").json()
+    assert r["profile"]["business_name"] == "Sharma Traders" and r["profile"]["mode"] == "board" and len(r["board"]["items"]) == 4 and r["board"]["sold_out"] == 1
+    assert client.post(f"{API}/demo").status_code == 409
+
+
+def test_status_reports_mode_and_board(client, ai):
+    profile(client, mode="board")
+    add_item(client, "Kaju katli, 1 kg", "900", "sold_out")
+    s = client.get(f"{API}/status").json()
+    assert s["mode"] == "board" and s["board"] == {"items": 1, "sold_out": 1} and not s["whatsapp"]["connected"]

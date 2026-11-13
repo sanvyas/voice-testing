@@ -4,14 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="robots" content="noindex" />
-  <meta name="theme-color" content="#6c5ce7" />
+  <meta name="theme-color" content="#F5F7F6" />
   <title>Munshi: AI call assistant</title>
-  <link rel="stylesheet" href="/lab/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" />
   <link rel="stylesheet" href="assistant.css" />
 </head>
 <body>
-  <header class="bar"><div class="in"><a class="brand" href="#/calls"><i></i><span>Munshi</span></a><nav id="nav" aria-label="Main"></nav></div></header>
-  <main id="view" tabindex="-1"></main>
+  <div id="app">
+    <main id="view" tabindex="-1"></main>
+    <nav id="nav" aria-label="Main"></nav>
+  </div>
   <div id="toasts" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
   <script type="module" src="app.js"></script>

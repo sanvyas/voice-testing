@@ -17,14 +17,15 @@ from lab.models import Call, CallNote, CallTurn, Contact, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, get_or_404, iso
 
-from . import prompts
+from . import board, prompts, whatsapp
 
 logger = logging.getLogger("ai_therapy.assistant")
 
+SECRET_BOX = None  # set at startup (lab/app.py) so background work can read saved keys
 MAX_TURNS = 60  # caller + assistant messages in one call; a cost and runaway guard
 PROFILE_KEY = "assistant.profile"
 INR_PER_USD = 95.0
-DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True}
+DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True}
 
 
 # --- phone numbers ------------------------------------------------------------------
@@ -63,6 +64,9 @@ class ProfileIn(BaseModel):
     languages: list[str] = Field(default_factory=lambda: ["hi", "en"], max_length=6)
     owner_phone: str = Field(default="", max_length=20)
     assistant_on: bool = True
+    address: str = Field(default="", max_length=200)
+    mode: str = Field(default="message", pattern="^(reply|message|board)$")  # reply: WhatsApp only | message: take a message | board: answer from Today's board
+    whatsapp_on: bool = True
 
     model_config = {"extra": "forbid", "str_strip_whitespace": True}
 
@@ -137,7 +141,7 @@ def call_summary(c: Call, turns: int | None = None, notes: int | None = None) ->
 
 def call_detail(c: Call) -> dict:
     return {**call_summary(c, len(c.turns), len(c.notes)), "action_items": c.action_items, "callback_number": c.callback_number, "language": c.language,
-            "summary_error": c.summary_error, "cost": c.cost, "provider_call_id": c.provider_call_id,
+            "summary_error": c.summary_error, "cost": c.cost, "provider_call_id": c.provider_call_id, "whatsapp": (c.meta or {}).get("whatsapp"),
             "turns": [{"idx": t.idx, "role": t.role, "content": t.content, "created_at": iso(t.created_at)} for t in c.turns],
             "notes": [{"id": n.id, "body": n.body, "after_turn": n.after_turn, "created_at": iso(n.created_at), "updated_at": iso(n.updated_at)} for n in c.notes]}
 
@@ -159,6 +163,12 @@ def start_call(session: Session, *, source: str, number: str = "", name: str = "
     if contact and contact.always_ring:
         call.handled_by, call.status, call.importance, call.ended_at = "owner", "done", "fyi", utcnow()
         call.summary = f"Missed call from {contact.name} (always-ring). The assistant did not answer; the caller heard that you are unavailable."
+        session.add(call)
+        session.flush()
+        return call, ""
+    if profile.get("mode") == "reply":  # WhatsApp-only mode: no conversation, the caller gets the instant reply
+        call.status, call.importance, call.ended_at = "done", "fyi", utcnow()
+        call.summary = "Missed call. The caller was sent an instant reply instead of being answered by the assistant."
         session.add(call)
         session.flush()
         return call, ""
@@ -196,7 +206,7 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
         if call.status != "live" or call.handled_by != "assistant":
             raise ServiceError("This call has ended.", 409)
         profile = get_profile(session)
-        return prompts.receptionist_prompt(profile), _history(call), len(call.turns)
+        return prompts.receptionist_prompt(profile, board.list_items(session)), _history(call), len(call.turns)
 
     system, history, count = await run_db(prepare)
     forced_end = count + 2 >= MAX_TURNS
@@ -232,6 +242,25 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
     caller_idx, assistant_idx = await run_db(store)
     return {"caller": {"idx": caller_idx, "role": "caller", "content": said}, "assistant": {"idx": assistant_idx, "role": "assistant", "content": reply}, "ended": ended,
             "latency_ms": result.latency_ms}
+
+
+async def send_reply_for_call(call_id: str) -> dict:
+    """Send the instant WhatsApp reply for a call that has no conversation (WhatsApp-only mode) and record how it went."""
+    def load(session: Session):
+        call = load_call(session, call_id)
+        creds = settings_store.get_whatsapp(session, SECRET_BOX)
+        return creds, call.caller_number, get_profile(session), board.list_items(session)
+
+    creds, number, profile, items = await run_db(load)
+    result = await whatsapp.send_reply(creds, number, profile, items) if profile.get("whatsapp_on", True) else {"sent": False, "error": "Switched off in Setup.", "id": ""}
+
+    def save(session: Session):
+        call = load_call(session, call_id)
+        call.meta = {**(call.meta or {}), "whatsapp": result}
+        call.summary = ("Missed call. The caller was sent an instant WhatsApp reply." if result["sent"] else f"Missed call. No reply could be sent ({result['error'] or 'WhatsApp is not connected'}).")
+        call.cost = estimate_cost(call)
+    await run_db(save)
+    return result
 
 
 def note_spoken(session: Session, call_id: str, chars: int, engine: str) -> None:
@@ -290,7 +319,8 @@ def estimate_cost(call: Call) -> dict:
     speech = m.get("tts_chars", 0) * price / 1e6 * INR_PER_USD
     pulses = -(-int(call.duration_s) // 30) if call.source == "phone" and call.duration_s else 0
     phone = pulses * 0.38 / 2
-    parts = {"speech_to_text": stt, "ai": llm_cost, "voice": speech, "phone": phone}
+    wa = 0.13 if (m.get("whatsapp") or {}).get("sent") else 0.0  # utility template, India list price as shown by MyOperator (Meta rate card not checked)
+    parts = {"speech_to_text": stt, "ai": llm_cost, "voice": speech, "phone": phone, "whatsapp": wa}
     return {**{k: round(v, 3) for k, v in parts.items()}, "total": round(sum(parts.values()), 3), "currency": "INR"}
 
 
@@ -300,12 +330,17 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         call = load_call(session, call_id)
         if call.status == "done":
             return None
-        return _history(call), sum(1 for t in call.turns if t.role == "caller")
+        creds = settings_store.get_whatsapp(session, SECRET_BOX)
+        sendable = call.source == "phone" and bool(call.caller_number) and creds["access_token"] and creds["phone_number_id"] and not (call.meta or {}).get("whatsapp")
+        return _history(call), sum(1 for t in call.turns if t.role == "caller"), (creds, call.caller_number, get_profile(session), board.list_items(session)) if sendable else None
 
     data = await run_db(load)
     if data is None:
         return await run_db(lambda s: call_detail(load_call(s, call_id)))
-    history, caller_turns = data
+    history, caller_turns, reply_ctx = data
+    wa_result = None
+    if reply_ctx and reply_ctx[2].get("whatsapp_on", True):  # the instant WhatsApp reply, once per call
+        wa_result = await whatsapp.send_reply(reply_ctx[0], reply_ctx[1], reply_ctx[2], reply_ctx[3])
     summary, error = Summary(), ""
     if caller_turns == 0:
         summary = Summary(summary="The caller hung up without saying anything.", importance="ignore", category="other")
@@ -332,6 +367,8 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         call.action_items = [{"id": uuid.uuid4().hex[:8], "text": t, "done": False} for t in summary.action_items]
         call.callback_number = _try_phone(summary.callback_number) or call.caller_number
         call.language, call.summary_error = summary.language[:20], error
+        if wa_result is not None:
+            call.meta = {**(call.meta or {}), "whatsapp": wa_result}
         call.cost = estimate_cost(call)
         session.flush()
         return call_detail(call)

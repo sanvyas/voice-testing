@@ -269,3 +269,43 @@ def phone_status(session: Session, box: SecretBox | None) -> dict:
     stored = get(session, "phone", {}) or {}
     return {"connected": bool(phone["auth_token"] and phone["number"]), "auth_id": phone["auth_id"], "number": phone["number"],
             "token_saved": bool(stored.get("token_enc")), "token_unreadable": bool(stored.get("token_enc")) and not phone["auth_token"]}
+
+
+# --- WhatsApp Business (Meta Cloud API) ----------------------------------------------
+
+def save_whatsapp(session: Session, box: SecretBox | None, *, phone_number_id: str, access_token: str, template: str, language: str) -> None:
+    stored = dict(get(session, "whatsapp", {}) or {})
+    if phone_number_id.strip():
+        if not re.fullmatch(r"\d{5,25}", phone_number_id.strip()):
+            raise ServiceError("The phone number ID is digits only (find it in Meta's WhatsApp API setup).", 422)
+        stored["phone_number_id"] = phone_number_id.strip()
+    if access_token.strip():
+        if box is None:
+            raise ServiceError("Cannot store keys securely: set LAB_SECRET_KEY (32+ characters) in the server environment.", 409)
+        stored["token_enc"] = box.encrypt(clean_key(access_token))
+    if template.strip():
+        if not re.fullmatch(r"[a-z0-9_]{1,512}", template.strip()):
+            raise ServiceError("A template name uses lower-case letters, digits and underscores only.", 422)
+        stored["template"] = template.strip()
+    if language.strip():
+        if not re.fullmatch(r"[a-z]{2}(_[A-Z]{2})?", language.strip()):
+            raise ServiceError("Use a language code such as en or en_US.", 422)
+        stored["language"] = language.strip()
+    put(session, "whatsapp", stored)
+
+
+def clear_whatsapp(session: Session) -> None:
+    put(session, "whatsapp", {})
+
+
+def get_whatsapp(session: Session, box: SecretBox | None) -> dict:
+    stored = get(session, "whatsapp", {}) or {}
+    token = box.decrypt(stored["token_enc"]) if box and stored.get("token_enc") else None
+    return {"phone_number_id": stored.get("phone_number_id", ""), "access_token": token or "", "template": stored.get("template", "missed_call_reply"), "language": stored.get("language", "en")}
+
+
+def whatsapp_status(session: Session, box: SecretBox | None) -> dict:
+    w = get_whatsapp(session, box)
+    stored = get(session, "whatsapp", {}) or {}
+    return {"connected": bool(w["access_token"] and w["phone_number_id"]), "phone_number_id": w["phone_number_id"], "template": w["template"], "language": w["language"],
+            "token_saved": bool(stored.get("token_enc")), "token_unreadable": bool(stored.get("token_enc")) and not w["access_token"]}
