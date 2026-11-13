@@ -56,8 +56,7 @@ export function conversationRow(c, { open = false, onToggle } = {}) {
 }
 
 /** Notes on a call: add while it is live or afterwards, edit, delete. Each note remembers where in the call it was written. */
-export function notesPanel(convId, initial = [], { onCount, urls } = {}) {
-  const u = urls || { add: `/conversations/${convId}/notes`, item: (id) => `/notes/${id}` };
+export function notesPanel(convId, initial = [], { onCount } = {}) {
   const items = [...initial]; let editing = null;
   const list = h('div', { class: 'stack', style: 'gap:8px' });
   const input = h('textarea', { rows: 2, maxlength: 2000, 'aria-label': 'Add a note', placeholder: 'What do you notice? e.g. reply felt scripted, voice cut off, caller sounded calmer…', style: 'min-height:64px' });
@@ -71,17 +70,17 @@ export function notesPanel(convId, initial = [], { onCount, urls } = {}) {
     if (editing === n.id) {
       const box = h('textarea', { rows: 2, maxlength: 2000, 'aria-label': 'Edit note', style: 'min-height:64px' }, n.body);
       return h('div', { class: 'note stack', style: 'gap:8px' }, box, h('div', { class: 'row' },
-        h('button', { class: 'go', onclick: async () => { try { Object.assign(n, await api(u.item(n.id), { method: 'PUT', body: { body: box.value } })); editing = null; draw(); } catch (e) { toast(e.message, true); } } }, 'Save'),
+        h('button', { class: 'go', onclick: async () => { try { Object.assign(n, await api(`/notes/${n.id}`, { method: 'PUT', body: { body: box.value } })); editing = null; draw(); } catch (e) { toast(e.message, true); } } }, 'Save'),
         h('button', { class: 'link', onclick: () => { editing = null; draw(); } }, 'Cancel')));
     }
     return h('div', { class: 'note' }, h('div', { class: 'small muted' }, `${where(n)} · ${ago(n.created_at)}`), h('div', { class: 'notetext' }, n.body),
       h('div', { class: 'row' }, h('button', { class: 'link', onclick: () => { editing = n.id; draw(); } }, 'Edit'),
-        h('button', { class: 'link danger', onclick: async () => { if (!(await ask('Delete this note?', { yes: 'Delete', danger: true }))) return; try { await api(u.item(n.id), { method: 'DELETE' }); items.splice(items.indexOf(n), 1); draw(); } catch (e) { toast(e.message, true); } } }, 'Delete')));
+        h('button', { class: 'link danger', onclick: async () => { if (!(await ask('Delete this note?', { yes: 'Delete', danger: true }))) return; try { await api(`/notes/${n.id}`, { method: 'DELETE' }); items.splice(items.indexOf(n), 1); draw(); } catch (e) { toast(e.message, true); } } }, 'Delete')));
   }
   const submit = async () => {
     const body = input.value.trim(); if (!body) return;
     add.disabled = true;
-    try { items.push(await api(u.add, { method: 'POST', body: { body } })); input.value = ''; draw(); }
+    try { items.push(await api(`/conversations/${convId}/notes`, { method: 'POST', body: { body } })); input.value = ''; draw(); }
     catch (e) { toast(e.message, true); }
     add.disabled = false;
   };

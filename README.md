@@ -1,29 +1,4 @@
-# Munshi: AI call assistant for small businesses
-
-Munshi answers the calls a shop owner, wholesaler or small factory misses. It talks to the caller in their language, takes the message, and gives the owner a summary with a to-do list. Calls from people the owner always wants to talk to are never answered by the AI.
-
-| Tab (`/assistant/`) | What you do |
-|---|---|
-| **Calls** | Calls that need you, a to-do list for each, the transcript, your own notes, and a one-tap Call back. |
-| **Try it** | Phone your own assistant from the browser as if you were a customer. Add notes while it happens. |
-| **Contacts** | People who always ring you (the AI does not answer them). Paste many at once. |
-| **Setup** | Your AI key, your business facts, the assistant's voice, and the Plivo phone line with the forwarding codes. |
-
-The prompt testing lab that tunes the assistant's behaviour lives at `/lab/` (it was the first version of this repository, see below).
-
-**Real phone calls** use Plivo: your phone forwards calls you miss to a Plivo number, Plivo calls `/telephony/plivo/*` on this server. It is turn based (about a 3 to 5 second pause after the caller stops), not live streaming. The phone path is tested with signed fake Plivo requests, not yet with a live Plivo account.
-
-| Extra setting | Meaning |
-|---|---|
-| `PUBLIC_BASE_URL` | The https address Plivo calls. Needed if the server sits behind a proxy that hides the real host. |
-| `ASSISTANT_MAX_CALLS_PER_DAY` | Stops spam from spending money (default 200). One number can call at most 5 times in 10 minutes. |
-| `GOOGLE_TTS_API_KEY`, `DEEPINFRA_API_KEY`, `TTS_CAP_CHARS_*` | Voices and their monthly character limits (or paste the keys in Setup). |
-
-Code map: `backend/assistant/` (`service.py` call logic and summary, `prompts.py` everything the model is told, `router.py` the product API, `phone.py` Plivo webhooks), `frontend/assistant/`. Tests: `backend/tests/test_assistant.py`.
-
----
-
-# Voice Test Lab (`/lab/`)
+# Voice Test Lab
 
 Test a voice assistant's prompt against different moods, talk to it, and publish the version that passes to your web and mobile apps.
 
@@ -114,7 +89,6 @@ One FastAPI process (`backend/main.py`), one Postgres database, no build step on
 | Data gone after a redeploy | `DATABASE_URL` missing: the "Temporary storage" banner shows |
 | Server voices (Google, Chatterbox): no sound, wrong voice, monthly limit | `tts.py` (vendor calls), `/speak` and `/settings/tts` in `admin_router.py`, usage counters in `settings_store.py`, `frontend/lab/voice.js` |
 | Call notes missing or wrong position | `Note` in `models.py` (migration `0003`), `/conversations/{id}/notes` in `router.py`, `notesPanel` in `frontend/lab/components.js` |
-| Call summary wrong or missing, calls not answered, phone line problems | `assistant/service.py` (`run_turn`, `finish_call`), `assistant/prompts.py`, `assistant/phone.py` (signature check first: a 403 means the saved Plivo Auth Token or `PUBLIC_BASE_URL` is wrong) |
 | Mic or voice problems | `frontend/lab/views/talk.js` (silence detection), `/transcribe` in `admin_router.py` |
 | Schema or migration errors | `models.py`, `alembic/versions/`, `db.py` (schema and pool) |
 

@@ -234,38 +234,3 @@ def tts_status(session: Session, box: SecretBox | None) -> dict:
     return {"active": tts.active(), "google_tier": tts._runtime["google_tier"], "google_gender": tts._runtime["google_gender"],
             "engines": engines, "month": usage["month"], "can_store": box is not None,
             "chatterbox_languages": tts.CHATTERBOX_LANGS}
-
-
-# --- phone line (Plivo) ----------------------------------------------------------
-
-def save_phone(session: Session, box: SecretBox | None, *, auth_id: str, auth_token: str, number: str) -> None:
-    from assistant.service import normalize_phone  # local import: assistant depends on this module
-
-    stored = dict(get(session, "phone", {}) or {})
-    if auth_id.strip():
-        stored["auth_id"] = auth_id.strip()[:60]
-    if auth_token.strip():
-        if box is None:
-            raise ServiceError("Cannot store keys securely: set LAB_SECRET_KEY (32+ characters) in the server environment.", 409)
-        stored["token_enc"] = box.encrypt(clean_key(auth_token))
-    if number.strip():
-        stored["number"] = normalize_phone(number)
-    put(session, "phone", stored)
-
-
-def clear_phone(session: Session) -> None:
-    put(session, "phone", {})
-
-
-def get_phone(session: Session, box: SecretBox | None) -> dict:
-    """Plivo credentials with the token decrypted. Used to verify webhooks, never sent to the browser."""
-    stored = get(session, "phone", {}) or {}
-    token = box.decrypt(stored["token_enc"]) if box and stored.get("token_enc") else None
-    return {"auth_id": stored.get("auth_id", ""), "auth_token": token or "", "number": stored.get("number", "")}
-
-
-def phone_status(session: Session, box: SecretBox | None) -> dict:
-    phone = get_phone(session, box)
-    stored = get(session, "phone", {}) or {}
-    return {"connected": bool(phone["auth_token"] and phone["number"]), "auth_id": phone["auth_id"], "number": phone["number"],
-            "token_saved": bool(stored.get("token_enc")), "token_unreadable": bool(stored.get("token_enc")) and not phone["auth_token"]}

@@ -46,7 +46,6 @@ async def self_check() -> None:
         logger.error("Self-check memory: could not run: %s", exc)
 
 UI_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "lab"
-ASSISTANT_UI_DIR = UI_DIR.parent / "assistant"
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; "
@@ -71,25 +70,11 @@ async def lab_lifespan(app: FastAPI):
     app.state.lab_runner = Runner(settings)
     await app.state.lab_runner.recover()
     check = asyncio.create_task(self_check())
-
-    async def sweep():  # calls left open for over an hour are closed and summarised
-        from assistant.service import close_stale_calls
-        while True:
-            try:
-                closed = await close_stale_calls()
-                if closed:
-                    logger.info("Closed %d call(s) that were left open", closed)
-            except Exception:  # noqa: BLE001
-                logger.exception("stale-call sweep failed")
-            await asyncio.sleep(600)
-
-    sweeper = asyncio.create_task(sweep())
     logger.info("Testing lab ready (env=%s, auth=%s)", settings.env, "on" if settings.api_tokens and not settings.open_access else "OFF")
     try:
         yield
     finally:
         check.cancel()
-        sweeper.cancel()
         await app.state.lab_runner.shutdown()
         await llm.close_client()
         db.dispose_db()
@@ -108,9 +93,9 @@ def install(app: FastAPI) -> None:
         path = request.url.path
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        if path.startswith(("/api/lab", "/api/assistant", "/telephony")):
+        if path.startswith("/api/lab"):
             response.headers["Cache-Control"] = "no-store"
-        if path.startswith(("/lab", "/assistant")):
+        if path.startswith("/lab"):
             response.headers["Content-Security-Policy"] = CSP
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Cache-Control"] = "no-cache"
@@ -143,13 +128,5 @@ def install(app: FastAPI) -> None:
     app.include_router(admin_router, prefix="/api/lab", tags=["lab"])
     app.include_router(v1_router, prefix="/api/v1")
 
-    from assistant.phone import router as phone_router
-    from assistant.router import router as assistant_router
-
-    app.include_router(assistant_router, prefix="/api/assistant", tags=["assistant"])
-    app.include_router(phone_router, tags=["telephony"])  # Plivo webhooks: checked by Plivo's signature, not the access token
-
     if UI_DIR.exists():
         app.mount("/lab", StaticFiles(directory=UI_DIR, html=True), name="lab-ui")
-    if ASSISTANT_UI_DIR.exists():
-        app.mount("/assistant", StaticFiles(directory=ASSISTANT_UI_DIR, html=True), name="assistant-ui")

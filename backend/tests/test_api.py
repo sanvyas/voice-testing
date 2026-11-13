@@ -432,5 +432,5 @@ def test_seed_runs_once(env, fake):
 
 def test_site_root_opens_the_lab_and_original_page_lives_at_app(client):
     r = client.get("/", follow_redirects=False)
-    assert r.status_code == 307 and r.headers["location"] == "/assistant/"
+    assert r.status_code == 307 and r.headers["location"] == "/lab/"
     assert "A space to talk" in client.get("/app").text
