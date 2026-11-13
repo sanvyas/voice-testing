@@ -612,3 +612,7 @@ def test_status_reports_mode_and_board(client, ai):
 
 def test_a_question_the_assistant_could_not_answer_always_needs_the_owner():
     assert "could not answer itself" in prompts.SUMMARY_SYSTEM and "ALWAYS makes it" in prompts.SUMMARY_SYSTEM
+
+
+def test_todo_wording_is_about_the_caller_not_the_owner():
+    assert "never name the owner as the person to call" in prompts.SUMMARY_SYSTEM
