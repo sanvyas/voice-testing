@@ -22,11 +22,11 @@ DEFAULT_PROVIDER, DEFAULT_MODEL = "groq", "qwen/qwen3.8-27b"
 
 
 def _tiny_png() -> str:
-    """A valid 1x1 white PNG, built here so it can never be mistyped."""
+    """A valid 64x64 white PNG (some services reject tiny images), built here so it can never be mistyped."""
     def chunk(kind: bytes, body: bytes) -> bytes:
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
 
-    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff")) + chunk(b"IEND", b"")
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress((b"\x00" + b"\xff" * (64 * 3)) * 64)) + chunk(b"IEND", b"")
     return base64.b64encode(png).decode()
 
 
