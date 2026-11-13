@@ -387,3 +387,11 @@ def test_calls_left_open_are_closed_and_summarised(client, ai):
     assert asyncio.run(service.close_stale_calls()) == 1
     closed = client.get(f"{API}/calls/{old}").json()
     assert closed["status"] == "done" and closed["importance"] == "action" and client.get(f"{API}/calls/{fresh}").json()["status"] == "live"
+
+
+def test_the_assistant_never_hangs_up_on_its_own_question(client, ai):
+    profile(client)
+    ai.replies = ["Ramesh will call you back. Should he use this number? <<END>>"]
+    cid = client.post(f"{API}/calls", json={}).json()["call"]["id"]
+    t = client.post(f"{API}/calls/{cid}/turns", json={"content": "I need rice"}).json()
+    assert t["ended"] is False and t["assistant"]["content"].endswith("?") and "<<END>>" not in t["assistant"]["content"]

@@ -177,7 +177,10 @@ def _clean_reply(text: str) -> tuple[str, bool]:
     ended = prompts.END_MARK in text
     text = text.replace(prompts.END_MARK, "")
     text = re.sub(r"[*_`#>]+", "", text)
-    return re.sub(r"\s+", " ", text).strip(), ended
+    text = re.sub(r"\s+", " ", text).strip()
+    if ended and text.endswith(("?", "？")):  # a question needs an answer: never hang up on it
+        ended = False
+    return text, ended
 
 
 async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
