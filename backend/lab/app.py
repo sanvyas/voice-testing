@@ -147,12 +147,17 @@ def install(app: FastAPI) -> None:
 
     app.include_router(router, prefix="/api/lab", tags=["lab"])
     app.include_router(admin_router, prefix="/api/lab", tags=["lab"])
+    from .shared import shared
+
+    app.include_router(shared, prefix="/api/lab", tags=["lab"])
     app.include_router(v1_router, prefix="/api/v1")
 
     from assistant.phone import router as phone_router
+    from assistant.admin import router as assistant_admin_router
     from assistant.router import router as assistant_router
 
     app.include_router(assistant_router, prefix="/api/assistant", tags=["assistant"])
+    app.include_router(assistant_admin_router, prefix="/api/assistant", tags=["assistant-admin"])
     app.include_router(phone_router, tags=["telephony"])  # Plivo webhooks: checked by Plivo's signature, not the access token
 
     if UI_DIR.exists():

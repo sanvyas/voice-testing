@@ -20,7 +20,6 @@ async function list(root) {
     mount(rows, ...(shown.length ? shown.map(card) : [h('div', { class: 'card empty' }, all.items.length ? (tab === 'action' ? 'Nothing needs you. Nice.' : 'Nothing here.') : 'No calls yet. Make a practice call to see how it works.')]));
   };
   const steps = [
-    [status.ai_ready, 'Connect your AI', 'Paste your Groq key', '#/setup'],
     [status.profile_ready, 'Describe your business', 'Your name, what you sell', '#/setup'],
     [all.total > 0, 'Make a practice call', 'Play a customer, see the summary', '#/try'],
   ];
@@ -51,7 +50,8 @@ function card(c) {
 }
 
 async function detail(root, id) {
-  const c = await A(`/calls/${id}`);
+  const [c, status] = await Promise.all([A(`/calls/${id}`), A('/status')]);
+  const admin = status.role === 'admin';  // what a call cost is for the platform, not for the business
   const name = who(c);
   const items = c.action_items;
   const todo = h('div', {});
@@ -76,6 +76,6 @@ async function detail(root, id) {
     c.turns.length ? h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'What was said'), h('div', { class: 'chat' }, ...c.turns.map((t) => h('div', { class: 'bubble ' + (t.role === 'assistant' ? 'assistant' : 'caller') }, t.content)))) : null,
     h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Your notes'), h('div', { class: 'small muted' }, 'Write down what you noticed: was it right, what should change.'),
       notesPanel(id, c.notes, { urls: { add: `/api/assistant/calls/${id}/notes`, item: (nid) => `/api/assistant/call-notes/${nid}` } })),
-    c.cost && c.cost.total !== undefined ? h('div', { class: 'small muted', style: 'text-align:center;line-height:1.5' }, `Estimated cost of this call: ${rupees(c.cost.total)} (phone ${rupees(c.cost.phone)}, voice ${rupees(c.cost.voice)}, AI ${rupees(c.cost.ai + c.cost.speech_to_text)}${c.cost.whatsapp ? `, WhatsApp ${rupees(c.cost.whatsapp)}` : ''})`) : null,
+    admin && c.cost && c.cost.total !== undefined ? h('div', { class: 'small muted', style: 'text-align:center;line-height:1.5' }, `Estimated cost of this call: ${rupees(c.cost.total)} (phone ${rupees(c.cost.phone)}, voice ${rupees(c.cost.voice)}, AI ${rupees(c.cost.ai + c.cost.speech_to_text)}${c.cost.whatsapp ? `, WhatsApp ${rupees(c.cost.whatsapp)}` : ''})`) : null,
     h('div', { style: 'text-align:center' }, h('button', { class: 'link danger', onclick: async () => { if (await ask('Delete this call and its notes?', { yes: 'Delete', danger: true })) { await A(`/calls/${id}`, { method: 'DELETE' }); changed(); location.hash = '#/calls'; } } }, 'Delete this call')));
 }

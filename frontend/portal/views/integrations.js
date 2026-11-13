@@ -15,7 +15,7 @@ export async function render(page) {
   await load();
 
   async function load() {
-    const [list, status, vision, tts, providers] = await Promise.all([A('/integrations'), A('/status'), A('/vision'), lab('/settings/tts'), lab('/settings/providers')]);
+    const [list, status, vision, tts, providers] = await Promise.all([A('/integrations'), A('/admin/platform'), A('/vision'), lab('/settings/tts'), lab('/settings/providers')]);
     const custom = providers.find((p) => p.id === 'custom') || {};
     const forms = {
       ai: () => aiForm(providers.find((p) => p.id === 'groq') || {}),
@@ -100,9 +100,9 @@ export async function render(page) {
     const id = txt('Plivo Auth ID', p.auth_id, 'Plivo Auth ID'); const tok = pw('Plivo Auth Token', p.token_saved ? 'Saved. Paste a new token to replace it' : 'Plivo Auth Token'); const num = txt('Plivo number', p.number, '+91 80 4711 2233');
     return [h('div', { class: 'small', style: 'font-weight:700' }, 'In Plivo (India), make an Application with these, method POST'), h('div', { class: 'small muted' }, 'Answer URL'), copyRow(s.webhooks.answer), h('div', { class: 'small muted' }, 'Hangup URL'), copyRow(s.webhooks.hangup),
       s.webhooks.https ? null : h('div', { class: 'notice' }, 'This page is not on https, so Plivo may not reach it.'),
-      field('Auth ID', id), field('Auth Token', tok), field('Your Plivo number', num),
+      field('Auth ID', id), field('Auth Token', tok), field('Default number (optional)', num),
       h('div', { class: 'row' }, h('button', { class: 'btn', style: 'width:auto', onclick: save(() => A('/phone', { method: 'PUT', body: { auth_id: id.value, auth_token: tok.value, number: num.value } }), 'Phone line saved') }, 'Save'),
         p.connected ? h('button', { class: 'link danger', onclick: save(() => A('/phone', { method: 'DELETE' }), 'Disconnected') }, 'Disconnect') : null),
-      h('div', { class: 'small', style: 'font-weight:700' }, 'Then forward missed calls (dial on your phone, once)'), ...s.forwarding.map((c) => h('div', { class: 'stack', style: 'gap:4px' }, h('div', { class: 'small muted' }, c.when), copyRow(c.dial)))];
+      h('div', { class: 'small muted' }, 'Each business gets its own number from Businesses. Plivo sends every call here, and Munshi answers for the business that owns the number that was called. The forwarding codes for each business are in that business’s app, under Setup.')];
   }
 }

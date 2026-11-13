@@ -7,20 +7,21 @@ import llm
 import tts
 from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from lab import settings_store
 from lab.db import get_session
-from lab.models import BoardItem, Call, CallNote, Contact
+from lab.models import BoardItem, Business, Call, CallNote, Contact
 from lab.runner import run_db
 from lab.schemas import Strict
-from lab.security import require_auth
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, costs, integrations, service, vision, whatsapp
+from . import board, config, costs, integrations, prompts, service, tenant, vision, whatsapp
+from .access import admin_only, scope
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter(dependencies=[Depends(scope)])
+ADMIN = [Depends(admin_only)]  # platform-level settings an owner never sees
 
 FORWARDING_CODES = [
     {"when": "I don't answer", "dial": "**61*{n}**20#", "note": "Forwards after about 20 seconds of ringing."},
@@ -44,6 +45,14 @@ def _box(request: Request):
     return request.app.state.lab_secret_box
 
 
+def _mine(session: Session, model, id_: str, label: str):
+    """A row of this business only. Another business's id is simply "not found"."""
+    row = get_or_404(session, model, id_, label)
+    if row.business_id != tenant.current():
+        raise ServiceError(f"{label} not found", 404)
+    return row
+
+
 # --- today ---------------------------------------------------------------------------
 
 @router.get("/stats")
@@ -53,23 +62,32 @@ def get_stats(session: Session = Depends(get_session)):
 
 @router.get("/status")
 def get_status(request: Request, session: Session = Depends(get_session)):
-    """Everything the Setup page needs to say what is connected and what is missing."""
+    """Everything the app needs to say what is set up and what is missing. Platform keys are shown to the admin only."""
     box = _box(request)
+    admin = request.state.role == "admin"
     settings_store.load_runtime(session, box)
     profile = service.get_profile(session)
-    phone = settings_store.phone_status(session, box)
+    biz = tenant.business(session)
+    items = board.list_items(session)
     base = public_base(request)
-    engine = tts.active()
-    return {
-        "ai_ready": bool(llm.configured_providers()), "speech_ready": bool(llm.configured_providers() and any(p in ("groq", "custom") for p in llm.configured_providers())),
-        "voice": {"engine": engine, "label": "Your device's voice" if engine == "device" else tts.ENGINES[engine]["label"], "server_voice_ready": any(e["configured"] for e in tts.engine_status())},
-        "profile_ready": bool(profile["business_name"] and profile["owner_name"]), "phone": phone, "mode": profile["mode"], "assistant_on": profile["assistant_on"],
-        "board": {"items": len(board.list_items(session)), "sold_out": sum(1 for i in board.list_items(session) if i.status == "sold_out")},
-        "whatsapp": {**settings_store.whatsapp_status(session, box), "template_body": whatsapp.TEMPLATE_BODY},
-        "webhooks": {"answer": f"{base}/telephony/plivo/answer", "hangup": f"{base}/telephony/plivo/hangup", "https": base.startswith("https://")},
-        "forwarding": [{**c, "dial": c["dial"].format(n=phone["number"].lstrip("+") if phone["number"] else "<your Plivo number>")} for c in FORWARDING_CODES],
-        "can_store_keys": box is not None,
+    phone_info = settings_store.phone_status(session, box)
+    number = biz.phone_number  # with a single business, the number saved with the Plivo account is that business's number
+    if not number and (session.scalar(select(func.count()).select_from(Business)) or 0) == 1:
+        number = phone_info["number"]
+    out = {
+        "role": request.state.role, "business": {"id": biz.id, "name": biz.name, "active": biz.active},
+        "ai_ready": bool(llm.configured_providers()), "profile_ready": bool(profile["business_name"] and profile["owner_name"]), "mode": profile["mode"], "assistant_on": profile["assistant_on"],
+        "board": {"items": len(items), "sold_out": sum(1 for i in items if i.status == "sold_out")},
+        "phone": {"connected": bool(number), "number": number}, "whatsapp": {"connected": settings_store.whatsapp_status(session, box)["connected"]},
+        "forwarding": [{**c, "dial": c["dial"].format(n=number.lstrip("+") if number else "<your Munshi number>")} for c in FORWARDING_CODES],
     }
+    if admin:
+        out["phone"] = {**phone_info, "number": number}
+        out["whatsapp"] = {**settings_store.whatsapp_status(session, box), "template_body": whatsapp.TEMPLATE_BODY}
+        engine = tts.active()
+        out["voice"] = {"engine": engine, "label": "Your device's voice" if engine == "device" else tts.ENGINES[engine]["label"], "server_voice_ready": any(e["configured"] for e in tts.engine_status())}
+        out["webhooks"] = {"answer": f"{base}/telephony/plivo/answer", "hangup": f"{base}/telephony/plivo/hangup", "https": base.startswith("https://")}
+    return out
 
 
 # --- profile and contacts ------------------------------------------------------------
@@ -111,7 +129,7 @@ class ImportIn(Strict):
 
 @router.get("/contacts")
 def list_contacts(session: Session = Depends(get_session)):
-    return [service.contact_out(c) for c in session.scalars(select(Contact).order_by(Contact.name)).all()]
+    return [service.contact_out(c) for c in session.scalars(select(Contact).where(Contact.business_id == tenant.current()).order_by(Contact.name)).all()]
 
 
 @router.post("/contacts", status_code=201)
@@ -126,7 +144,7 @@ def import_contacts(body: ImportIn, session: Session = Depends(get_session)):
 
 @router.put("/contacts/{contact_id}")
 def update_contact(contact_id: str, body: ContactUpdate, session: Session = Depends(get_session)):
-    c = get_or_404(session, Contact, contact_id, "Contact")
+    c = _mine(session, Contact, contact_id, "Contact")
     if body.name is not None:
         c.name = body.name.strip() or c.name
     if body.always_ring is not None:
@@ -139,7 +157,7 @@ def update_contact(contact_id: str, body: ContactUpdate, session: Session = Depe
 
 @router.delete("/contacts/{contact_id}", status_code=204)
 def delete_contact(contact_id: str, session: Session = Depends(get_session)):
-    session.delete(get_or_404(session, Contact, contact_id, "Contact"))
+    session.delete(_mine(session, Contact, contact_id, "Contact"))
     return Response(status_code=204)
 
 
@@ -237,7 +255,7 @@ def say_to_board(body: SayIn, session: Session = Depends(get_session)):
 
 @router.put("/board/{item_id}")
 def update_board_item(item_id: str, body: BoardUpdate, session: Session = Depends(get_session)):
-    item = get_or_404(session, BoardItem, item_id, "Item")
+    item = _mine(session, BoardItem, item_id, "Item")
     if body.name is not None and body.name.strip():
         item.name = body.name.strip()
     if body.price is not None:
@@ -251,7 +269,7 @@ def update_board_item(item_id: str, body: BoardUpdate, session: Session = Depend
 
 @router.delete("/board/{item_id}", status_code=204)
 def delete_board_item(item_id: str, session: Session = Depends(get_session)):
-    item = get_or_404(session, BoardItem, item_id, "Item")
+    item = _mine(session, BoardItem, item_id, "Item")
     config.audit(session, "board", f"Removed “{item.name}” from the board")
     session.delete(item)
     return Response(status_code=204)
@@ -343,7 +361,7 @@ async def spoken(call_id: str, chars: int = Query(ge=0, le=20000), engine: str =
 
 @router.put("/calls/{call_id}")
 def update_call(call_id: str, body: CallUpdate, session: Session = Depends(get_session)):
-    call = get_or_404(session, Call, call_id, "Call")
+    call = _mine(session, Call, call_id, "Call")
     if body.reviewed is not None:
         call.reviewed = body.reviewed
     session.flush()
@@ -352,7 +370,7 @@ def update_call(call_id: str, body: CallUpdate, session: Session = Depends(get_s
 
 @router.put("/calls/{call_id}/actions/{action_id}")
 def update_action(call_id: str, action_id: str, body: ActionUpdate, session: Session = Depends(get_session)):
-    call = get_or_404(session, Call, call_id, "Call")
+    call = _mine(session, Call, call_id, "Call")
     items = [dict(a) for a in call.action_items]
     hit = next((a for a in items if a["id"] == action_id), None)
     if hit is None:
@@ -367,7 +385,7 @@ def update_action(call_id: str, action_id: str, body: ActionUpdate, session: Ses
 
 @router.delete("/calls/{call_id}", status_code=204)
 def delete_call(call_id: str, session: Session = Depends(get_session)):
-    call = get_or_404(session, Call, call_id, "Call")
+    call = _mine(session, Call, call_id, "Call")
     session.delete(call)
     return Response(status_code=204)
 
@@ -391,7 +409,9 @@ def edit_note(note_id: str, body: NoteIn, session: Session = Depends(get_session
 
 @router.delete("/call-notes/{note_id}", status_code=204)
 def delete_note(note_id: str, session: Session = Depends(get_session)):
-    session.delete(get_or_404(session, CallNote, note_id, "Note"))
+    note = get_or_404(session, CallNote, note_id, "Note")
+    service.load_call(session, note.call_id)  # 404 unless it is this business's call
+    session.delete(note)
     return Response(status_code=204)
 
 
@@ -404,27 +424,27 @@ class WhatsAppIn(Strict):
     language: str = Field(default="", max_length=10)
 
 
-@router.put("/whatsapp")
+@router.put("/whatsapp", dependencies=ADMIN)
 async def put_whatsapp(body: WhatsAppIn, request: Request):
     box = _box(request)
 
     def work(session: Session):
         settings_store.save_whatsapp(session, box, phone_number_id=body.phone_number_id, access_token=body.access_token, template=body.template, language=body.language)
-        config.audit(session, "integrations", "WhatsApp details saved")
+        config.audit(session, "integrations", business_id=None, summary="WhatsApp details saved")
         return settings_store.whatsapp_status(session, box)
     return await run_db(work)
 
 
-@router.delete("/whatsapp", status_code=204)
+@router.delete("/whatsapp", status_code=204, dependencies=ADMIN)
 async def delete_whatsapp():
     def work(session: Session):
         settings_store.clear_whatsapp(session)
-        config.audit(session, "integrations", "WhatsApp disconnected")
+        config.audit(session, "integrations", business_id=None, summary="WhatsApp disconnected")
     await run_db(work)
     return Response(status_code=204)
 
 
-@router.post("/whatsapp/test")
+@router.post("/whatsapp/test", dependencies=ADMIN)
 async def test_whatsapp(request: Request):
     """Send the real reply to the owner's own number, so they see exactly what a caller would."""
     box = _box(request)
@@ -449,39 +469,39 @@ class PhoneIn(Strict):
     number: str = Field(default="", max_length=20)
 
 
-@router.put("/phone")
+@router.put("/phone", dependencies=ADMIN)
 async def put_phone(body: PhoneIn, request: Request):
     box = _box(request)
 
     def work(session: Session):
         settings_store.save_phone(session, box, auth_id=body.auth_id, auth_token=body.auth_token, number=body.number)
-        config.audit(session, "integrations", "Phone line details saved")
+        config.audit(session, "integrations", business_id=None, summary="Phone line details saved")
         return settings_store.phone_status(session, box)
     return await run_db(work)
 
 
-@router.delete("/phone", status_code=204)
+@router.delete("/phone", status_code=204, dependencies=ADMIN)
 async def delete_phone():
     def work(session: Session):
         settings_store.clear_phone(session)
-        config.audit(session, "integrations", "Phone line disconnected")
+        config.audit(session, "integrations", business_id=None, summary="Phone line disconnected")
     await run_db(work)
     return Response(status_code=204)
 
 
 # --- portal: cost, budget, knowledge rules, prompts, integrations, activity ----------------
 
-@router.get("/costs")
+@router.get("/costs", dependencies=ADMIN)
 def get_costs(days: int = Query(30, ge=1, le=365), session: Session = Depends(get_session)):
     return costs.overview(session, days)
 
 
-@router.get("/budget")
+@router.get("/budget", dependencies=ADMIN)
 def get_budget(session: Session = Depends(get_session)):
     return {**config.get_budget(session), "spend": config.month_spend(session)}
 
 
-@router.put("/budget")
+@router.put("/budget", dependencies=ADMIN)
 def put_budget(body: config.BudgetIn, session: Session = Depends(get_session)):
     return {**config.save_budget(session, body), "spend": config.month_spend(session)}
 
@@ -496,49 +516,54 @@ def put_knowledge(body: config.KnowledgeIn, session: Session = Depends(get_sessi
     return config.save_knowledge(session, body)
 
 
-def _prompt_view(session: Session) -> dict:
-    profile = service.get_profile(session)
-    live = config.get_prompts(session)
-    from . import prompts as p
-
-    return {**config.prompts_with_history(session), "defaults": {"greeting": p.greeting({**profile, "owner_name": profile["owner_name"] or "Ramesh", "business_name": profile["business_name"] or "Sharma Traders"}),
-            "greeting_hint": "Use {business} and {owner} where the names should go."},
-            "preview": {"assistant": p.receptionist_prompt(profile, board.shareable(session), live["extra"]), "summary": p.summary_system(live["summary_rules"])}}
+class PromptsPut(Strict):
+    scope: str = Field(pattern="^(platform|business)$")
+    templates: dict[str, str] = Field(max_length=10)
+    note: str = Field(default="", max_length=200)
 
 
-@router.get("/prompts")
-def get_prompts(session: Session = Depends(get_session)):
-    return _prompt_view(session)
-
-
-@router.put("/prompts")
-def put_prompts(body: config.PromptsIn, session: Session = Depends(get_session)):
-    config.save_prompts(session, body.model_dump())
-    return _prompt_view(session)
-
-
-class RestoreIn(Strict):
+class PromptsRestore(Strict):
+    scope: str = Field(pattern="^(platform|business)$")
     version: int = Field(ge=0)
 
 
-@router.post("/prompts/restore")
-def restore_prompts(body: RestoreIn, session: Session = Depends(get_session)):
-    config.restore_prompts(session, body.version)
-    return _prompt_view(session)
+class PromptPreview(Strict):
+    kind: str = Field(max_length=20)
+    text: str = Field(default="", max_length=12000)
+    business_id: str = Field(default="", max_length=32)
 
 
-@router.post("/prompts/reset")
-def reset_prompts(session: Session = Depends(get_session)):
-    config.save_prompts(session, config.EMPTY_PROMPTS, "Prompts reset to the built-in text")
-    return _prompt_view(session)
+@router.get("/prompts", dependencies=ADMIN)
+def get_prompts(scope: str = Query("business", pattern="^(platform|business)$"), session: Session = Depends(get_session)):
+    return config.template_view(session, scope)
 
 
-@router.get("/activity")
-def get_activity(limit: int = Query(60, ge=1, le=200), area: str | None = Query(None, max_length=20), session: Session = Depends(get_session)):
-    return config.activity(session, limit, area)
+@router.put("/prompts", dependencies=ADMIN)
+def put_prompts(body: PromptsPut, session: Session = Depends(get_session)):
+    return config.save_templates(session, body.scope, body.templates, body.note)
 
 
-@router.get("/integrations")
+@router.post("/prompts/restore", dependencies=ADMIN)
+def restore_prompts(body: PromptsRestore, session: Session = Depends(get_session)):
+    return config.restore_templates(session, body.scope, body.version)
+
+
+@router.post("/prompts/preview", dependencies=ADMIN)
+def preview_prompt(body: PromptPreview, session: Session = Depends(get_session)):
+    """The text filled in with one real business's details (the chosen one, else the one being edited, else the first)."""
+    biz = body.business_id or tenant.active_id() or tenant.first_business_id(session)
+    if biz is None:
+        return config.render_preview(session, body.kind, body.text, {**service.DEFAULT_PROFILE, "business_name": "Sharma Traders", "owner_name": "Ramesh", "mode": "board"}, [])
+    with tenant.acting_as(biz):
+        return {**config.render_preview(session, body.kind, body.text, service.get_profile(session), board.shareable(session)), "business": tenant.business(session).name}
+
+
+@router.get("/activity", dependencies=ADMIN)
+def get_activity(limit: int = Query(60, ge=1, le=200), area: str | None = Query(None, max_length=20), all: bool = False, session: Session = Depends(get_session)):
+    return config.activity(session, limit, area, everyone=all)
+
+
+@router.get("/integrations", dependencies=ADMIN)
 def get_integrations(request: Request, session: Session = Depends(get_session)):
     s = request.app.state.lab_settings
     schema = f" · schema {s.database_schema}" if getattr(s, "database_schema", None) else ""
@@ -546,7 +571,7 @@ def get_integrations(request: Request, session: Session = Depends(get_session)):
     return integrations.overview(session, _box(request), info)
 
 
-@router.post("/integrations/{integration_id}/test")
+@router.post("/integrations/{integration_id}/test", dependencies=ADMIN)
 async def test_integration(integration_id: str, request: Request):
     return await integrations.run_test(integration_id, run_db, _box(request))
 
@@ -556,13 +581,13 @@ class VisionIn(Strict):
     model: str = Field(min_length=1, max_length=120)
 
 
-@router.get("/vision")
+@router.get("/vision", dependencies=ADMIN)
 def get_vision():
     provider, model = vision.which()
     return {"provider": provider, "model": model, "provider_options": [["groq", "Groq"], ["custom", "OpenRouter or another OpenAI-compatible service"]]}
 
 
-@router.put("/vision")
+@router.put("/vision", dependencies=ADMIN)
 async def put_vision(body: VisionIn, request: Request):
     box = _box(request)
 
@@ -571,7 +596,7 @@ async def put_vision(body: VisionIn, request: Request):
         roles["vision"] = {"provider": body.provider, "model": body.model.strip()}
         settings_store.put(session, "roles", roles)
         settings_store.load_runtime(session, box)
-        config.audit(session, "integrations", f"Photo reader set to {body.provider} · {body.model.strip()}")
+        config.audit(session, "integrations", business_id=None, summary=f"Photo reader set to {body.provider} · {body.model.strip()}")
     await run_db(work)
     provider, model = vision.which()
     return {"provider": provider, "model": model}

@@ -1,31 +1,79 @@
 import { h, mount, toast, ask, ago } from '/lab/ui.js';
 import { A } from '/assistant/net.js';
+import { businessList, selectedId } from '../ctx.js';
 
-const words = (t) => (t.trim() ? t.trim().split(/\s+/).length : 0);
+const VAR = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+const usedIn = (t) => [...new Set([...t.matchAll(VAR)].map((m) => m[1]))];
 
 export async function render(page) {
-  const body = h('div', { class: 'stack', style: 'gap:18px' });
-  mount(page, h('div', { class: 'pagehead' }, h('div', {}, h('h1', { class: 'title' }, 'Prompts'), h('div', { class: 'sub' }, 'Shape how the assistant greets, what extra it should do, and how call notes are written. Saved changes apply to the very next call.')),
-    h('a', { class: 'btn', style: 'width:auto', href: '/assistant/#/try', target: '_blank', rel: 'noopener' }, 'Try it with a practice call')), body);
+  const list = await businessList();
+  const sel = list.find((b) => b.id === selectedId());
+  let scope = sel ? 'business' : 'platform'; let kind = 'assistant'; let previewBiz = sel ? sel.id : (list[0] ? list[0].id : '');
+  let data = null; let timer = null;
+  const body = h('div', { class: 'stack', style: 'gap:16px' });
+  mount(page, h('div', {}, h('h1', { class: 'title' }, 'Prompts'), h('div', { class: 'sub' }, 'Write what the AI is told. Put a {{variable}} where a detail should go, and it is filled in from each business’s own information: its name, hours, address, prices and more. Saved changes apply to the very next call.')), body);
   await load();
 
-  async function load() {
-    const d = await A('/prompts');
-    const greeting = h('input', { type: 'text', value: d.greeting, maxlength: 300, placeholder: d.defaults.greeting, 'aria-label': 'Greeting' });
-    const extra = h('textarea', { rows: 6, maxlength: 1500, placeholder: 'e.g. Always ask which shop the caller owns. Offer to send the price list on WhatsApp.', 'aria-label': 'Extra instructions' }, d.extra);
-    const rules = h('textarea', { rows: 4, maxlength: 800, placeholder: 'e.g. Write quantities as numbers. Put the caller’s shop name first.', 'aria-label': 'Call note rules' }, d.summary_rules);
+  async function load() { data = await A(`/prompts?scope=${scope}`); draw(); }
+
+  function draw() {
+    const tpl = data.templates[kind];
+    const original = tpl.value;
+    const ta = h('textarea', { class: 'editor', spellcheck: 'false', 'aria-label': tpl.label }, original);
+    const status = h('div', { class: 'small' }); const preview = h('pre', { class: 'prompt' }); const lockedBox = h('div', { class: 'locked' }); const values = h('div', { class: 'stack', style: 'gap:6px' }); const meta = h('div', { class: 'small muted' });
     const save = h('button', { class: 'btn', style: 'width:auto' }, 'Save changes');
-    save.addEventListener('click', async () => { save.disabled = true; try { await A('/prompts', { method: 'PUT', body: { greeting: greeting.value, extra: extra.value, summary_rules: rules.value } }); toast('Saved. The next call uses it.'); load(); } catch (e) { toast(e.message, true); save.disabled = false; } });
-    mount(body,
-      h('div', { class: 'grid2' },
-        h('div', { class: 'card stack' }, h('div', { class: 'row between' }, h('h2', { class: 'sec' }, 'Your changes'), h('span', { class: 'badge ' + (d.version ? 'ok' : '') }, d.version ? `Live: version ${d.version}` : 'Built-in text')),
-          h('label', { class: 'f' }, 'Greeting', greeting, h('small', {}, `Leave empty to use the built-in greeting. Use {business} and {owner} for the names. ${d.defaults.greeting_hint}`)),
-          h('label', { class: 'f' }, 'Extra instructions for the phone assistant', extra, h('small', {}, `${words(d.extra)} words. These are added after the built-in rules and can never override the hard rules (no promises, no guessing prices, no card numbers).`)),
-          h('label', { class: 'f' }, 'Rules for the call notes', rules, h('small', {}, 'Added to how summaries and to-dos are written. The notes stay short.')),
-          h('div', { class: 'row' }, save, h('button', { class: 'plain', onclick: async () => { if (await ask('Go back to the built-in prompts? Your current text is kept in the history.', { yes: 'Reset' })) { await A('/prompts/reset', { method: 'POST' }); toast('Back to the built-in text'); load(); } } }, 'Reset to built-in'))),
-        h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'History'), d.history.length ? h('div', {}, ...d.history.map((v) => h('div', { class: 'hist' }, h('div', {}, h('b', {}, `Version ${v.version}`), h('div', { class: 'small muted' }, `${ago(v.at)} · ${[v.greeting && 'greeting', v.extra && 'extra instructions', v.summary_rules && 'note rules'].filter(Boolean).join(', ') || 'built-in text'}`)),
-          h('button', { class: 'plain', onclick: async () => { await A('/prompts/restore', { method: 'POST', body: { version: v.version } }); toast(`Restored version ${v.version}`); load(); } }, 'Restore')))) : h('div', { class: 'muted' }, 'No earlier versions yet. Each save keeps the one before it, up to 20.'))),
-      h('details', { class: 'card stack' }, h('summary', { style: 'cursor:pointer;font-weight:700;font-size:17px' }, `What the phone assistant is told, right now (${words(d.preview.assistant)} words)`), h('div', { class: 'small muted', style: 'margin:8px 0' }, 'This is exactly what the model reads on every call, including the business details and today’s board. Read-only.'), h('pre', { class: 'prompt' }, d.preview.assistant)),
-      h('details', { class: 'card stack' }, h('summary', { style: 'cursor:pointer;font-weight:700;font-size:17px' }, `How call notes are written (${words(d.preview.summary)} words)`), h('pre', { class: 'prompt', style: 'margin-top:10px' }, d.preview.summary)));
+    const chips = h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' });
+
+    const dirty = () => ta.value.trim() !== original.trim();
+    const refreshChips = () => { const used = new Set(usedIn(ta.value)); mount(chips, ...tpl.variables.map((v) => h('button', { type: 'button', class: 'varchip' + (used.has(v.name) ? ' used' : ''), title: v.description, onclick: () => { ta.focus(); ta.setRangeText(`{{${v.name}}}`, ta.selectionStart, ta.selectionEnd, 'end'); ta.dispatchEvent(new Event('input')); } }, `{{${v.name}}}`))); };
+    const refreshStatus = (unknown = []) => {
+      save.disabled = !dirty() || unknown.length > 0;
+      status.style.color = unknown.length ? 'var(--danger)' : '';
+      status.textContent = unknown.length ? `Not a variable: ${unknown.map((u) => `{{${u}}}`).join(', ')}. Pick from the list above.` : (dirty() ? 'Unsaved changes. The preview on the right shows exactly what the AI would read.' : (tpl.own ? (scope === 'business' ? 'This business has its own version.' : 'The platform has its own version.') : (scope === 'business' ? 'Following the platform text.' : 'Showing the built-in text.')));
+    };
+    async function refreshPreview() {
+      try {
+        const r = await A('/prompts/preview', { method: 'POST', body: { kind, text: ta.value, business_id: previewBiz } });
+        preview.textContent = r.text; lockedBox.textContent = r.locked; lockedBox.parentElement.hidden = !r.locked;
+        meta.textContent = `${r.words} words${r.business ? ` · filled in for ${r.business}` : ''}`;
+        mount(values, ...Object.entries(r.values).map(([k, v]) => h('div', { class: 'small' }, h('code', {}, `{{${k}}}`), ' → ', h('span', { class: 'muted' }, v ? (v.length > 90 ? `${v.slice(0, 90).replace(/\n/g, ' ')}…` : v.replace(/\n/g, ' ')) : '(empty for this business)'))));
+        refreshStatus(r.unknown);
+      } catch (e) { preview.textContent = e.message; }
+    }
+    ta.addEventListener('input', () => { refreshChips(); refreshStatus(unknownLocal()); clearTimeout(timer); timer = setTimeout(refreshPreview, 350); });
+    const unknownLocal = () => usedIn(ta.value).filter((u) => !tpl.variables.some((v) => v.name === u));
+
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try { data = await A('/prompts', { method: 'PUT', body: { scope, templates: { [kind]: ta.value } } }); toast('Saved. The next call uses it.'); window.dispatchEvent(new Event('munshi-changed')); draw(); }
+      catch (e) { toast(e.message, true); refreshStatus(); }
+    });
+    const back = h('button', { class: 'plain', onclick: () => { ta.value = scope === 'business' ? tpl.inherited : tpl.default; ta.dispatchEvent(new Event('input')); } }, scope === 'business' ? 'Use the platform text' : 'Use the built-in text');
+
+    const scopeTabs = sel ? h('div', { class: 'tabs2', role: 'tablist', 'aria-label': 'Who this applies to' },
+      h('button', { class: scope === 'business' ? 'on' : '', onclick: () => { scope = 'business'; load(); } }, `Only ${sel.name}`), h('button', { class: scope === 'platform' ? 'on' : '', onclick: () => { scope = 'platform'; load(); } }, 'Platform default (everyone)')) : null;
+    const kinds = h('div', { class: 'tabs2', role: 'tablist', 'aria-label': 'Which prompt' }, ...Object.entries(data.templates).map(([id, t]) => h('button', { class: kind === id ? 'on' : '', onclick: () => { kind = id; draw(); } }, t.label, t.own ? ' •' : '')));
+    const previewPick = h('select', { 'aria-label': 'Preview with business', style: 'width:auto;max-width:260px', onchange: (e) => { previewBiz = e.target.value; refreshPreview(); } }, ...list.map((b) => h('option', { value: b.id, selected: b.id === previewBiz }, b.name)));
+
+    mount(body, scopeTabs,
+      scope === 'platform' ? h('div', { class: 'notice' }, 'You are editing the platform default. It applies to every business that has not set its own version.') : h('div', { class: 'notice ok' }, `You are editing the version for ${sel.name} only. Other businesses are not affected.`),
+      kinds,
+      h('div', { class: 'grid2', style: 'align-items:start' },
+        h('div', { class: 'card stack' },
+          h('div', {}, h('h2', { class: 'sec' }, tpl.label), h('div', { class: 'small muted' }, tpl.help)),
+          ta,
+          h('div', { class: 'stack', style: 'gap:8px' }, h('div', { class: 'small', style: 'font-weight:700' }, 'Click a variable to put it where your cursor is'), chips),
+          status,
+          h('div', { class: 'row' }, save, back),
+          tpl.locked ? h('div', { class: 'stack', style: 'gap:6px' }, h('div', { class: 'small', style: 'font-weight:700' }, 'Always added after your text (cannot be changed)'), h('div', { class: 'locked' }, tpl.locked)) : null),
+        h('div', { class: 'stack' },
+          h('div', { class: 'card stack' }, h('div', { class: 'row between' }, h('h2', { class: 'sec' }, 'What the AI reads'), previewPick), preview,
+            h('div', { hidden: true }, h('div', { class: 'small', style: 'font-weight:700;margin:6px 0' }, 'Then, always'), lockedBox), meta),
+          h('details', { class: 'card stack' }, h('summary', { style: 'cursor:pointer;font-weight:700' }, 'What each variable is filled with'), h('div', { style: 'margin-top:10px' }, values)),
+          h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Versions'),
+            data.history.length ? h('div', {}, ...data.history.map((v) => h('div', { class: 'hist' }, h('div', {}, h('b', {}, `Version ${v.version}`), h('div', { class: 'small muted' }, `${ago(v.at)}${v.kinds.length ? ' · ' + v.kinds.join(', ') : ' · built-in text'}`)),
+              h('button', { class: 'plain', onclick: async () => { if (await ask(`Go back to version ${v.version}? Your current text is kept in the history.`, { yes: 'Restore' })) { data = await A('/prompts/restore', { method: 'POST', body: { scope, version: v.version } }); toast(`Restored version ${v.version}`); draw(); } } }, 'Restore'))))
+              : h('div', { class: 'muted' }, data.version ? 'No earlier versions kept.' : 'No changes saved yet. Each save keeps the one before it, up to 20.')))));
+    refreshChips(); refreshStatus(); refreshPreview();
   }
 }

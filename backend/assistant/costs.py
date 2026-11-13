@@ -12,7 +12,7 @@ from lab import settings_store
 from lab.models import Call, utcnow
 from lab.service import iso
 
-from . import config
+from . import config, tenant
 
 PARTS = ("phone", "voice", "ai", "speech_to_text", "whatsapp")
 LABELS = {"phone": "Phone line", "voice": "Voice", "ai": "AI thinking", "speech_to_text": "Understanding speech", "whatsapp": "WhatsApp replies"}
@@ -28,7 +28,7 @@ UNIT_PRICES = [
 
 def overview(session: Session, days: int = 30) -> dict:
     since = utcnow() - timedelta(days=days)
-    calls = list(session.scalars(select(Call).where(Call.started_at >= since, Call.status == "done").order_by(Call.started_at)))
+    calls = list(session.scalars(select(Call).where(Call.business_id == tenant.current(), Call.started_at >= since, Call.status == "done").order_by(Call.started_at)))
     by_part: dict[str, float] = defaultdict(float)
     per_day: dict[str, dict] = {}
     minutes, priced = 0.0, 0

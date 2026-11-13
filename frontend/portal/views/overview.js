@@ -1,9 +1,10 @@
 import { h, mount, ago } from '/lab/ui.js';
-import { A, getConfig, ic, ICONS, rupees } from '/assistant/net.js';
+import { A, getConfig, ic, ICONS, rupees, who } from '/assistant/net.js';
+import { choose, selectedId } from '../ctx.js';
 
 const kpi = (label, value, sub, hot) => h('div', { class: 'kpi' + (hot ? ' hot' : '') }, h('div', { class: 'l' }, label), h('div', { class: 'v' }, value), sub ? h('div', { class: 's' }, sub) : null);
 
-export async function render(page) {
+async function businessOverview(page) {
   const [costs, stats, status, integ, board, asked, activity, cfg] = await Promise.all([A('/costs?days=30'), A('/stats'), A('/status'), A('/integrations'), A('/board'), A('/board/asked'), A('/activity?limit=6'), getConfig()]);
   const m = costs.month;
   const todo = [];
@@ -17,7 +18,7 @@ export async function render(page) {
   window.dispatchEvent(new CustomEvent('portal-attention', { detail: todo.length }));
   const max = Math.max(1, ...costs.daily.map((d) => d.total));
   mount(page,
-    h('div', { class: 'pagehead' }, h('div', {}, h('h1', { class: 'title' }, 'Overview'), h('div', { class: 'sub' }, 'Everything the assistant is doing, and what it costs. Changes here reach the app straight away.')), h('a', { class: 'btn', style: 'width:auto', href: '/assistant/#/try', target: '_blank', rel: 'noopener' }, ic(ICONS.mic, [], true), 'Try a practice call')),
+    h('div', { class: 'pagehead' }, h('div', {}, h('h1', { class: 'title' }, 'Overview'), h('div', { class: 'sub' }, 'What the assistant is doing for this business, and what it costs. Changes here reach their app straight away.')), h('a', { class: 'btn', style: 'width:auto', href: '/assistant/#/try', target: '_blank', rel: 'noopener' }, ic(ICONS.mic, [], true), 'Try a practice call')),
     h('div', { class: 'kpis' }, kpi('Calls, last 30 days', String(costs.calls), `${costs.minutes} minutes`), kpi('Need you now', String(stats.needs_action), stats.needs_action ? 'waiting for a reply' : 'all clear', stats.needs_action > 0),
       kpi('Spend this month', rupees(m.spend) || 'Rs 0', m.budget ? `of Rs ${m.budget.toLocaleString()} budget` : `projected ${rupees(m.projected) || 'Rs 0'}`), kpi('Average per call', costs.per_call ? rupees(costs.per_call) : '—', costs.per_minute ? `${rupees(costs.per_minute)} per minute` : 'no calls yet')),
     h('div', { class: 'grid2' },
@@ -27,4 +28,34 @@ export async function render(page) {
         h('a', { href: '#/costs', class: 'small', style: 'color:var(--primary);font-weight:600' }, 'Open costs'))),
     h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h2', { class: 'sec' }, 'Recent changes'), h('a', { href: '#/activity', class: 'small', style: 'color:var(--primary);font-weight:600' }, 'All activity')),
       activity.length ? h('div', { class: 'timeline' }, ...activity.map((a) => h('div', { class: 'row' }, h('span', { class: 'badge' }, a.area), h('div', { class: 'grow' }, a.summary), h('span', { class: 'small muted', style: 'white-space:nowrap' }, ago(a.at))))) : h('div', { class: 'muted' }, 'Nothing has changed yet.')));
+}
+
+const LINKS = { phone: ['businesses', 'Add number'], setup: ['businesses', 'Open'], off: ['businesses', 'Open'], budget: ['costs', 'Open'], stale: ['knowledge', 'Check prices'], backlog: ['calls', 'See calls'], link: ['businesses', 'Create link'], paused: ['businesses', 'Open'] };
+
+async function platformOverview(page) {
+  const [o, p] = await Promise.all([A('/admin/overview?days=30'), A('/admin/platform')]);
+  const todo = [...o.attention];
+  if (!p.signed_in_required) todo.push({ business_id: '', business: 'Platform', kind: 'signin', level: 'bad', text: 'Sign-in is off: anyone with this address can open the portal and every business. Set LAB_OPEN_ACCESS=false and LAB_API_TOKENS on the server.' });
+  window.dispatchEvent(new CustomEvent('portal-attention', { detail: todo.length }));
+  const max = Math.max(1, ...o.daily.map((d) => d.calls));
+  mount(page,
+    h('div', { class: 'pagehead' }, h('div', {}, h('h1', { class: 'title' }, 'Overview'), h('div', { class: 'sub' }, 'Every business on the platform, last 30 days.')), h('a', { class: 'btn', style: 'width:auto', href: '#/businesses' }, 'Manage businesses')),
+    h('div', { class: 'kpis' }, kpi('Businesses', String(o.businesses), `${o.active} active`), kpi('Calls answered', String(o.calls), 'by the assistant'), kpi('Waiting for owners', String(o.needs_action), o.needs_action ? 'across all businesses' : 'all clear', o.needs_action > 0),
+      kpi('Spend', rupees(o.cost) || 'Rs 0', o.per_call ? `${rupees(o.per_call)} per call` : 'no calls yet')),
+    h('div', { class: 'grid2' },
+      h('div', { class: 'card' }, h('h2', { class: 'sec', style: 'margin-bottom:6px' }, todo.length ? `Needs attention (${todo.length})` : 'Nothing needs attention'),
+        todo.length ? h('div', {}, ...todo.slice(0, 12).map((n) => { const [route, cta] = LINKS[n.kind] || ['businesses', 'Open'];
+          return h('div', { class: 'attn' }, h('span', { class: 'ico ' + (n.level === 'info' ? '' : 'warn') }, ic(ICONS.info)), h('div', { class: 'grow' }, h('div', { class: 't' }, n.business), h('div', { class: 'd' }, n.text)),
+            n.kind === 'signin' ? null : h('button', { class: 'badge act', onclick: () => { choose(n.business_id); location.hash = `#/${route}`; } }, cta)); })) : h('div', { class: 'muted' }, 'Every business is set up, prices are fresh and spend is on track.')),
+      h('div', { class: 'stack' },
+        h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Calls per day'), o.daily.length ? h('div', { class: 'chart', role: 'img', 'aria-label': 'Calls per day' }, ...o.daily.map((d) => h('div', { class: 'col', title: `${d.date}: ${d.calls} calls · ${rupees(d.cost)}`, style: `height:${Math.max(4, d.calls / max * 100)}%` }))) : h('div', { class: 'muted' }, 'No calls yet.')),
+        h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Busiest businesses'), o.top.length ? h('div', {}, ...o.top.map((t) => h('div', { class: 'hist' }, h('b', {}, t.name), h('span', { class: 'small muted' }, `${t.calls} calls · ${rupees(t.cost) || 'Rs 0'}`)))) : h('div', { class: 'muted' }, 'Nothing yet.')))),
+    h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h2', { class: 'sec' }, 'Latest calls'), h('a', { href: '#/calls', class: 'small', style: 'color:var(--primary);font-weight:600' }, 'All calls')),
+      o.recent.length ? h('div', {}, ...o.recent.map((c) => h('div', { class: 'hist' }, h('div', {}, h('b', {}, who(c)), h('div', { class: 'small muted' }, `${c.business} · ${c.summary || 'No summary'}`)), h('span', { class: 'small muted', style: 'white-space:nowrap' }, ago(c.started_at))))) : h('div', { class: 'muted' }, 'No calls yet.')));
+}
+
+export async function render(page) {
+  const list = (await A('/admin/businesses')).items;
+  if (selectedId() && list.some((b) => b.id === selectedId())) return businessOverview(page);
+  return platformOverview(page);
 }

@@ -17,7 +17,7 @@ from lab import settings_store
 from lab.models import BoardItem, Call, utcnow
 from lab.service import ServiceError, iso
 
-from . import config
+from . import config, tenant
 
 STATUSES = ("in_stock", "sold_out", "ask")
 STATUS_LABEL = {"in_stock": "in stock", "sold_out": "sold out", "ask": "ask the owner"}
@@ -46,7 +46,7 @@ def item_out(i: BoardItem, stale_days: int = 0) -> dict:
 
 
 def list_items(session: Session) -> list[BoardItem]:
-    return list(session.scalars(select(BoardItem).order_by(BoardItem.position, BoardItem.name)))
+    return list(session.scalars(select(BoardItem).where(BoardItem.business_id == tenant.current()).order_by(BoardItem.position, BoardItem.name)))
 
 
 def board_out(session: Session) -> dict:
@@ -90,13 +90,13 @@ def add_item(session: Session, name: str, price: str = "", status: str = "in_sto
         raise ServiceError("Give the item a name.", 422)
     if status not in STATUSES:
         raise ServiceError("Status must be in_stock, sold_out or ask.", 422)
-    if (session.scalar(select(func.count()).select_from(BoardItem)) or 0) >= MAX_ITEMS:
+    if (session.scalar(select(func.count()).select_from(BoardItem).where(BoardItem.business_id == tenant.current())) or 0) >= MAX_ITEMS:
         raise ServiceError(f"The board holds up to {MAX_ITEMS} items.", 409)
-    clash = session.scalar(select(BoardItem).where(func.lower(BoardItem.name) == name.lower()))
+    clash = session.scalar(select(BoardItem).where(BoardItem.business_id == tenant.current(), func.lower(BoardItem.name) == name.lower()))
     if clash is not None:
         raise ServiceError(f"“{clash.name}” is already on the board.", 409)
-    position = (session.scalar(select(func.max(BoardItem.position))) or 0) + 1
-    item = BoardItem(name=name, price=clean_price(price), status=status, position=position, confirmed_at=utcnow())
+    position = (session.scalar(select(func.max(BoardItem.position)).where(BoardItem.business_id == tenant.current())) or 0) + 1
+    item = BoardItem(business_id=tenant.current(), name=name, price=clean_price(price), status=status, position=position, confirmed_at=utcnow())
     session.add(item)
     session.flush()
     return item
@@ -251,15 +251,14 @@ def apply_items(session: Session, wanted: list[dict]) -> dict:
 
 # --- what callers asked that the board could not answer ---------------------------------
 
-DISMISSED_KEY = "assistant.dismissed"
 
 
 def asked_terms(session: Session, days: int = 30) -> list[dict]:
     items = list_items(session)
-    dismissed = set(settings_store.get(session, DISMISSED_KEY, []) or [])
+    dismissed = set(tenant.get(session, "dismissed", []) or [])
     counts: dict[str, dict] = {}
     since = utcnow() - timedelta(days=days)
-    for call in session.scalars(select(Call).where(Call.started_at >= since, Call.status == "done")):
+    for call in session.scalars(select(Call).where(Call.business_id == tenant.current(), Call.started_at >= since, Call.status == "done")):
         for term in (call.meta or {}).get("unanswered", []):
             key = re.sub(r"\s+", " ", term.lower()).strip()
             if not key or key in dismissed or find_existing(key, items):
@@ -272,10 +271,10 @@ def asked_terms(session: Session, days: int = 30) -> list[dict]:
 
 
 def dismiss_term(session: Session, term: str) -> None:
-    current = list(settings_store.get(session, DISMISSED_KEY, []) or [])
+    current = list(tenant.get(session, "dismissed", []) or [])
     key = re.sub(r"\s+", " ", term.lower()).strip()
     if key and key not in current:
-        settings_store.put(session, DISMISSED_KEY, (current + [key])[-200:])
+        tenant.put(session, "dismissed", (current + [key])[-200:])
 
 
 def facts_for_prompt(items: list[BoardItem]) -> str:

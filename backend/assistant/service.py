@@ -1,6 +1,7 @@
 """The call assistant's logic: profile, contacts, running a call turn by turn, and summarising it afterwards."""
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -17,13 +18,12 @@ from lab.models import Call, CallNote, CallTurn, Contact, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, prompts, whatsapp
+from . import board, config, prompts, tenant, whatsapp
 
 logger = logging.getLogger("ai_therapy.assistant")
 
 SECRET_BOX = None  # set at startup (lab/app.py) so background work can read saved keys
 MAX_TURNS = 60  # caller + assistant messages in one call; a cost and runaway guard
-PROFILE_KEY = "assistant.profile"
 INR_PER_USD = 95.0
 DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True}
 
@@ -80,13 +80,14 @@ class ProfileIn(BaseModel):
 
 
 def get_profile(session: Session) -> dict:
-    return {**DEFAULT_PROFILE, **(settings_store.get(session, PROFILE_KEY, {}) or {})}
+    return {**DEFAULT_PROFILE, **(tenant.get(session, "profile", {}) or {})}
 
 
 def save_profile(session: Session, body: ProfileIn) -> dict:
     data = body.model_dump()
     data["owner_phone"] = normalize_phone(data["owner_phone"]) if data["owner_phone"] else ""
-    settings_store.put(session, PROFILE_KEY, data)
+    tenant.put(session, "profile", data)
+    tenant.business(session).name = (data["business_name"] or tenant.business(session).name)[:120]
     return data
 
 
@@ -98,9 +99,9 @@ def contact_out(c: Contact) -> dict:
 
 def add_contact(session: Session, name: str, phone: str, always_ring: bool = True, note: str = "") -> Contact:
     number = normalize_phone(phone)
-    if session.scalar(select(Contact).where(Contact.phone == number)):
+    if session.scalar(select(Contact).where(Contact.business_id == tenant.current(), Contact.phone == number)):
         raise ServiceError(f"{number} is already in your contacts.", 409)
-    c = Contact(name=name.strip()[:120] or number, phone=number, always_ring=always_ring, note=note.strip()[:300])
+    c = Contact(business_id=tenant.current(), name=name.strip()[:120] or number, phone=number, always_ring=always_ring, note=note.strip()[:300])
     session.add(c)
     session.flush()
     return c
@@ -127,7 +128,7 @@ def import_contacts(session: Session, text: str) -> dict:
 
 def find_contact(session: Session, number: str) -> Contact | None:
     n = _try_phone(number)
-    return session.scalar(select(Contact).where(Contact.phone == n)) if n else None
+    return session.scalar(select(Contact).where(Contact.business_id == tenant.current(), Contact.phone == n)) if n else None
 
 
 # --- calls --------------------------------------------------------------------------
@@ -147,7 +148,7 @@ def call_detail(c: Call) -> dict:
 
 
 def load_call(session: Session, call_id: str) -> Call:
-    call = session.scalars(select(Call).where(Call.id == call_id).options(selectinload(Call.turns), selectinload(Call.notes))).first()
+    call = session.scalars(select(Call).where(Call.id == call_id, Call.business_id == tenant.current()).options(selectinload(Call.turns), selectinload(Call.notes))).first()
     if call is None:
         raise ServiceError("Call not found", 404)
     return call
@@ -158,7 +159,7 @@ def start_call(session: Session, *, source: str, number: str = "", name: str = "
     profile = get_profile(session)
     n = _try_phone(number)
     contact = find_contact(session, n) if n else None
-    call = Call(source=source, caller_number=n, caller_name=(contact.name if contact else name.strip()[:120]), contact_id=contact.id if contact else None,
+    call = Call(business_id=tenant.current(), source=source, caller_number=n, caller_name=(contact.name if contact else name.strip()[:120]), contact_id=contact.id if contact else None,
                 provider_call_id=provider_call_id, meta={})
     if contact and contact.always_ring:
         call.handled_by, call.status, call.importance, call.ended_at = "owner", "done", "fyi", utcnow()
@@ -172,7 +173,7 @@ def start_call(session: Session, *, source: str, number: str = "", name: str = "
         session.add(call)
         session.flush()
         return call, ""
-    first = prompts.greeting(profile, config.get_prompts(session)["greeting"])
+    first = prompts.greeting(profile, config.resolve(session, prompts.greeting_kind(profile)))
     call.turns.append(CallTurn(idx=1, role="assistant", content=first))
     session.add(call)
     session.flush()
@@ -193,6 +194,17 @@ def _clean_reply(text: str) -> tuple[str, bool]:
     return text, ended
 
 
+def _scoped(fn):
+    """Run a call-level job for the business that owns the call (phone webhooks and the sweep have no request scope of their own)."""
+    @functools.wraps(fn)
+    async def wrapper(call_id: str, *args, **kwargs):
+        biz = await run_db(lambda s: tenant.for_call(s, call_id))
+        with tenant.acting_as(biz):
+            return await fn(call_id, *args, **kwargs)
+    return wrapper
+
+
+@_scoped
 async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
     """One exchange: the caller said something, the assistant answers. Nothing is saved if the model fails."""
     said = re.sub(r"\s+", " ", said or "").strip()
@@ -206,7 +218,9 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
         if call.status != "live" or call.handled_by != "assistant":
             raise ServiceError("This call has ended.", 409)
         profile = get_profile(session)
-        return prompts.receptionist_prompt(profile, board.shareable(session), config.get_prompts(session)["extra"]), _history(call), len(call.turns)
+        system = prompts.receptionist_prompt(profile, board.shareable(session), config.resolve(session, "assistant"), caller_name=call.caller_name, caller_number=call.caller_number,
+                                             today=utcnow().strftime("%d %B %Y"))
+        return system, _history(call), len(call.turns)
 
     system, history, count = await run_db(prepare)
     forced_end = count + 2 >= MAX_TURNS
@@ -244,6 +258,7 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
             "latency_ms": result.latency_ms}
 
 
+@_scoped
 async def send_reply_for_call(call_id: str) -> dict:
     """Send the instant WhatsApp reply for a call that has no conversation (WhatsApp-only mode) and record how it went."""
     def load(session: Session):
@@ -265,7 +280,7 @@ async def send_reply_for_call(call_id: str) -> dict:
 
 def note_spoken(session: Session, call_id: str, chars: int, engine: str) -> None:
     """Remember how much speech was synthesised, for the cost estimate."""
-    call = session.get(Call, call_id)
+    call = session.scalar(select(Call).where(Call.id == call_id, Call.business_id == tenant.current()))
     if call:
         meta = dict(call.meta or {})
         meta["tts_chars"] = meta.get("tts_chars", 0) + chars
@@ -340,6 +355,7 @@ def estimate_cost(call: Call) -> dict:
     return {**{k: round(v, 3) for k, v in parts.items()}, "total": round(sum(parts.values()), 3), "currency": "INR"}
 
 
+@_scoped
 async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
     """Close a call and write its summary. Safe to call twice; the second call just returns the saved result."""
     def load(session: Session):
@@ -348,13 +364,15 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
             return None
         creds = settings_store.get_whatsapp(session, SECRET_BOX)
         sendable = call.source == "phone" and bool(call.caller_number) and creds["access_token"] and creds["phone_number_id"] and not (call.meta or {}).get("whatsapp")
-        return _history(call), sum(1 for t in call.turns if t.role == "caller"), (creds, call.caller_number, get_profile(session), board.shareable(session), config.get_prompts(session)["summary_rules"]) if sendable else (None, None, None, None, config.get_prompts(session)["summary_rules"])
+        profile = get_profile(session)
+        system = prompts.summary_system(profile, config.resolve(session, "summary"), utcnow().strftime("%d %B %Y"))
+        reply = (creds, call.caller_number, profile, board.shareable(session)) if sendable else (None, None, None, None)
+        return _history(call), sum(1 for t in call.turns if t.role == "caller"), reply, system
 
     data = await run_db(load)
     if data is None:
         return await run_db(lambda s: call_detail(load_call(s, call_id)))
-    history, caller_turns, reply_ctx = data
-    summary_rules = reply_ctx[4]
+    history, caller_turns, reply_ctx, summary_prompt = data
     wa_result = None
     if reply_ctx[0] and reply_ctx[2].get("whatsapp_on", True):  # the instant WhatsApp reply, once per call
         wa_result = await whatsapp.send_reply(reply_ctx[0], reply_ctx[1], reply_ctx[2], reply_ctx[3])
@@ -364,7 +382,7 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
     else:
         transcript = "\n".join(f"{'ASSISTANT' if m['role'] == 'assistant' else 'CALLER'}: {m['content']}" for m in history)
         try:
-            result = await llm.chat([{"role": "system", "content": prompts.summary_system(summary_rules)}, {"role": "user", "content": transcript}], temperature=0.1, max_tokens=900, retries=1)
+            result = await llm.chat([{"role": "system", "content": summary_prompt}, {"role": "user", "content": transcript}], temperature=0.1, max_tokens=900, retries=1)
             summary = parse_summary(result.reply)
             if summary.importance == "action" and not summary.action_items:  # the owner must always get something to do
                 summary.action_items = [f"Follow up: {summary.summary}"[:300]]
@@ -414,7 +432,7 @@ async def close_stale_calls(max_age_minutes: int = 60) -> int:
 # --- lists and numbers -------------------------------------------------------------
 
 def list_calls(session: Session, *, importance: str | None, q: str | None, limit: int, offset: int, open_only: bool = False) -> dict:
-    query = select(Call).where(Call.handled_by == "assistant", Call.status == "done")
+    query = select(Call).where(Call.business_id == tenant.current(), Call.handled_by == "assistant", Call.status == "done")
     if importance:
         query = query.where(Call.importance == importance)
     if open_only:
@@ -433,15 +451,16 @@ def list_calls(session: Session, *, importance: str | None, q: str | None, limit
 def stats(session: Session) -> dict:
     now = utcnow()
     since = now - timedelta(days=7)
-    done = (Call.handled_by == "assistant", Call.status == "done")
+    done = (Call.business_id == tenant.current(), Call.handled_by == "assistant", Call.status == "done")
     def count(*where):
         return session.scalar(select(func.count()).select_from(Call).where(*done, *where)) or 0
     return {"answered_7d": count(Call.started_at >= since), "needs_action": count(Call.importance == "action", Call.reviewed.is_(False)),
-            "not_worth_time_7d": count(Call.importance == "ignore", Call.started_at >= since), "rang_you_7d": session.scalar(select(func.count()).select_from(Call).where(Call.handled_by == "owner", Call.started_at >= since)) or 0}
+            "not_worth_time_7d": count(Call.importance == "ignore", Call.started_at >= since), "rang_you_7d": session.scalar(select(func.count()).select_from(Call).where(Call.business_id == tenant.current(), Call.handled_by == "owner", Call.started_at >= since)) or 0}
 
 
 def edit_note(session: Session, note_id: str, body: str) -> CallNote:
     note = get_or_404(session, CallNote, note_id, "Note")
+    load_call(session, note.call_id)  # 404 unless the call belongs to this business
     note.body = body
     session.flush()
     return note

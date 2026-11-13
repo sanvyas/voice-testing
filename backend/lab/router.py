@@ -17,6 +17,7 @@ from .db import get_session
 from .models import Conversation, EvalParam, EvalSet, Note, Prompt, PromptVersion, Scenario, TestRun, Turn, utcnow
 from .runner import Runner, refresh_run, run_db
 from .security import require_auth
+from .shared import shared
 from .service import ServiceError, get_or_404
 from .templating import TemplateError, extract_variables, merge_values, render
 
@@ -31,7 +32,7 @@ def runner_of(request: Request) -> Runner:
 
 # --- config ----------------------------------------------------------------------
 
-@router.get("/config")
+@shared.get("/config")
 def get_config(request: Request):
     settings = request.app.state.lab_settings
     providers = [

@@ -276,13 +276,29 @@ class Deployment(Base):
 
 # --- AI call assistant (product) -------------------------------------------------------
 
-class Contact(Base):
-    """Someone the owner knows. ``always_ring`` contacts are never answered by the assistant."""
-    __tablename__ = "contacts"
+class Business(Base):
+    """One customer of the platform. Everything below (contacts, calls, board, settings) belongs to exactly one business."""
+    __tablename__ = "businesses"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    phone: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)  # E.164, e.g. +919876543210
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # paused businesses are not answered by the AI
+    phone_number: Mapped[str] = mapped_column(String(20), default="", nullable=False, index=True)  # the Plivo number that forwards to this business (E.164)
+    key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)  # sha256 of the owner's private link key
+    key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # the same key, encrypted, so the admin can show the link again
+    settings: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # profile, knowledge window, budget, prompt overrides
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Contact(Base):
+    """Someone the owner knows. ``always_ring`` contacts are never answered by the assistant."""
+    __tablename__ = "contacts"
+    __table_args__ = (UniqueConstraint("business_id", "phone", name="uq_contact_business_phone"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False)  # E.164, e.g. +919876543210
     always_ring: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     note: Mapped[str] = mapped_column(String(300), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
@@ -293,6 +309,7 @@ class Call(Base):
     __table_args__ = (Index("ix_calls_started", "started_at"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
     source: Mapped[str] = mapped_column(String(12), nullable=False)  # test (in the browser) | phone
     handled_by: Mapped[str] = mapped_column(String(12), default="assistant", nullable=False)  # assistant | owner (always-ring contact)
     status: Mapped[str] = mapped_column(String(12), default="live", nullable=False, index=True)  # live | done
@@ -351,6 +368,7 @@ class BoardItem(Base):
     __tablename__ = "board_items"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     price: Mapped[str] = mapped_column(String(40), default="", nullable=False)  # as the owner writes it, e.g. "Rs 450"
     status: Mapped[str] = mapped_column(String(12), default="in_stock", nullable=False)  # in_stock | sold_out | ask
@@ -364,6 +382,7 @@ class AuditEntry(Base):
     __tablename__ = "audit_entries"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    business_id: Mapped[str | None] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=True, index=True)  # empty for platform-wide changes
     area: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # business | board | prompts | integrations | budget | system
     summary: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)

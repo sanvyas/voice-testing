@@ -14,6 +14,7 @@ from .models import ApiKey, Deployment, EvalSet, utcnow
 from .runner import run_db
 from .schemas import Strict
 from .security import require_auth
+from .shared import shared
 from .service import ServiceError, get_or_404
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -143,7 +144,7 @@ def put_app_settings(body: AppSettingsUpdate, session: Session = Depends(get_ses
 
 # --- voice (text to speech) -----------------------------------------------------
 
-@router.get("/settings/tts")
+@shared.get("/settings/tts")
 def get_tts(request: Request, session: Session = Depends(get_session)):
     return settings_store.tts_status(session, _box(request))
 
@@ -169,7 +170,7 @@ async def delete_tts_key(name: str, request: Request):
     return Response(status_code=204)
 
 
-@router.post("/speak")
+@shared.post("/speak")
 async def speak(body: SpeakRequest, request: Request):
     """Turn text into audio with the chosen engine. Counts characters against a monthly cap so a test cannot run up a bill."""
     engine = body.engine or tts.active()
@@ -262,7 +263,7 @@ def version_evidence(body: EvidenceRequest, session: Session = Depends(get_sessi
 
 # --- speech to text for the lab's live page ---------------------------------------
 
-@router.post("/transcribe")
+@shared.post("/transcribe")
 async def transcribe(file: UploadFile = File(...), language: str = Form("")):
     audio = await file.read(MAX_AUDIO_BYTES + 1)
     if not audio:

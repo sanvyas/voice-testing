@@ -491,7 +491,8 @@ def whatsapp_preview(client):
     from lab import db
     from lab.models import BoardItem
     from sqlalchemy import select
-    with db.session_scope() as session:
+    from assistant import tenant
+    with db.session_scope() as session, tenant.acting_as(tenant.first_business_id(session)):
         return whatsapp.preview(service.get_profile(session), list(session.scalars(select(BoardItem))))
 
 

@@ -2,14 +2,17 @@ import { h, mount, toast, ask, ago, dialog } from '/lab/ui.js';
 import { A, apiForm, ic, ICONS } from '/assistant/net.js';
 import { updateFromPhoto } from '/assistant/photo.js';
 import { makeListener, canRecord } from '/assistant/listener.js';
+import { needBusiness } from '../ctx.js';
 
 const STATES = [['in_stock', 'In stock', ''], ['sold_out', 'Sold out', 'out'], ['ask', 'Ask me', 'ask']];
 const WINDOWS = [[0, 'Never'], [1, '1 day'], [2, '2 days'], [3, '3 days'], [7, '1 week'], [14, '2 weeks']];
 
 export async function render(page) {
+  const biz = await needBusiness(page, 'Knowledge', 'What the assistant may say about prices and stock, kept fresh with a photo, a few words or one tap.');
+  if (!biz) return;
   const listener = makeListener();
   const body = h('div', { class: 'stack', style: 'gap:18px' });
-  mount(page, h('div', {}, h('h1', { class: 'title' }, 'Knowledge'), h('div', { class: 'sub' }, 'What the assistant may say about prices and stock. Keep it fresh with a photo, a few words, or one tap.')), body);
+  mount(page, h('div', {}, h('h1', { class: 'title' }, `Knowledge · ${biz.name}`), h('div', { class: 'sub' }, 'What the assistant may say about prices and stock. Keep it fresh with a photo, a few words, or one tap.')), body);
   await load();
 
   async function load() {

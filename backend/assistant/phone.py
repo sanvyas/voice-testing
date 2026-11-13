@@ -25,11 +25,11 @@ from plivo.utils import validate_v3_signature
 from sqlalchemy import func, select
 
 from lab import settings_store
-from lab.models import Call, utcnow
+from lab.models import Business, Call, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError
 
-from . import config, prompts, service
+from . import config, prompts, service, tenant
 
 logger = logging.getLogger("ai_therapy.assistant.phone")
 router = APIRouter()
@@ -134,17 +134,30 @@ async def answer(request: Request):
         return forbidden()
     uuid, caller, called = form.get("CallUUID", ""), form.get("From", ""), form.get("To", "")
 
+    def which(session):
+        row = tenant.by_number(session, called)
+        return (row.id, row.active) if row else (None, False)
+
+    biz_id, active = await run_db(which)
+    if not biz_id or not active:  # a number nobody owns, or a paused business
+        return xml(await speak_xml("The person you are calling is not available right now. Please try again later.", "en-IN", request), "<Hangup/>")
+    with tenant.acting_as(biz_id):
+        return await _answer(request, uuid, caller, called)
+
+
+async def _answer(request: Request, uuid: str, caller: str, called: str):
     def open_call(session):
         profile = service.get_profile(session)
         if not profile["assistant_on"]:
             return profile, None, "off"
         since = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        today = session.scalar(select(func.count()).select_from(Call).where(Call.source == "phone", Call.started_at >= since)) or 0
-        recent = session.scalar(select(func.count()).select_from(Call).where(Call.source == "phone", Call.caller_number == service._try_phone(caller),
+        mine = Call.business_id == tenant.current()
+        today = session.scalar(select(func.count()).select_from(Call).where(mine, Call.source == "phone", Call.started_at >= since)) or 0
+        recent = session.scalar(select(func.count()).select_from(Call).where(mine, Call.source == "phone", Call.caller_number == service._try_phone(caller),
                                                                                   Call.started_at >= utcnow() - timedelta(minutes=10))) if caller else 0
         if today >= MAX_CALLS_PER_DAY or (recent or 0) >= MAX_CALLS_PER_CALLER_10MIN or config.over_budget(session):
             return profile, None, "limit"
-        existing = session.scalar(select(Call).where(Call.provider_call_id == uuid)) if uuid else None
+        existing = session.scalar(select(Call).where(mine, Call.provider_call_id == uuid)) if uuid else None
         if existing is not None:  # Plivo retried the webhook
             return profile, (existing.id, ""), "retry"
         call, first = service.start_call(session, source="phone", number=caller, provider_call_id=uuid or None)
@@ -186,9 +199,16 @@ async def turn(request: Request, call: str = ""):
     form = await verified_form(request)
     if form is None:
         return forbidden()
+    biz_id = await run_db(lambda s: s.scalar(select(Call.business_id).where(Call.id == call)))
+    if not biz_id:
+        return xml("<Hangup/>")
+    with tenant.acting_as(biz_id):
+        return await _turn(request, call, form)
 
+
+async def _turn(request: Request, call: str, form: dict):
     def context(session):
-        row = session.get(Call, call)
+        row = session.scalar(select(Call).where(Call.id == call, Call.business_id == tenant.current()))
         if row is None or row.status != "live":
             return None
         return service.get_profile(session), int((row.meta or {}).get("silent", 0))
@@ -201,7 +221,7 @@ async def turn(request: Request, call: str = ""):
 
     async def silence():
         def bump(session):
-            row = session.get(Call, call)
+            row = session.scalar(select(Call).where(Call.id == call, Call.business_id == tenant.current()))
             meta = dict(row.meta or {})
             meta["silent"] = int(meta.get("silent", 0)) + 1
             row.meta = meta

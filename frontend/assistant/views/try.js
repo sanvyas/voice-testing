@@ -122,7 +122,7 @@ export async function render(root) {
   }
 
   mount(root, h('div', {}, h('h1', { class: 'title' }, 'Try it'), h('div', { class: 'sub' }, 'Call your own assistant from this page, as if you were a customer. No phone line needed.')),
-    !status.ai_ready ? h('div', { class: 'notice' }, ['Connect your AI key first. ', h('a', { href: '#/setup', style: 'font-weight:700;text-decoration:underline' }, 'Open Setup')]) : null,
+    !status.ai_ready ? h('div', { class: 'notice' }, status.role === 'admin' ? ['The AI is not connected. ', h('a', { href: '/portal/#/integrations', style: 'font-weight:700;text-decoration:underline' }, 'Connect it in the portal')] : 'The assistant is not available right now. Please contact your Munshi administrator.') : null,
     status.ai_ready && !status.profile_ready ? h('div', { class: 'notice' }, ['Add your name and business name so it knows who it answers for. ', h('a', { href: '#/setup', style: 'font-weight:700;text-decoration:underline' }, 'Open Setup')]) : null,
     h('div', { class: 'card stack' },
       h('div', { class: 'row between' }, h('span', { class: 'badge ok' }, MODES[profile.mode]), h('a', { href: '#/setup', class: 'small', style: 'color:var(--primary);font-weight:600' }, 'Change')),

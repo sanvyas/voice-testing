@@ -1,9 +1,10 @@
 import { h, mount, toast, ago } from '/lab/ui.js';
 import { A, rupees } from '/assistant/net.js';
+import { choose, selectedId } from '../ctx.js';
 
 const COLORS = { phone: '#0B7A5B', voice: '#7C5CE0', ai: '#E8590C', speech_to_text: '#2F8FD8', whatsapp: '#C2A100' };
 
-export async function render(page) {
+async function businessCosts(page) {
   let days = 30;
   const body = h('div', { class: 'stack', style: 'gap:18px' });
   const draw = async () => {
@@ -33,4 +34,31 @@ export async function render(page) {
   };
   mount(page, h('div', {}, h('h1', { class: 'title' }, 'Costs'), h('div', { class: 'sub' }, 'What each call costs, where it goes, and a budget so nothing surprises you.')), body);
   await draw();
+}
+
+async function platformCosts(page) {
+  let days = 30;
+  const body = h('div', { class: 'stack', style: 'gap:18px' });
+  const draw = async () => {
+    const c = await A(`/admin/costs?days=${days}`);
+    const max = Math.max(1, ...c.daily.map((d) => d.total));
+    mount(body,
+      h('div', { class: 'kpis' }, ...[[`Spend, last ${days} days`, rupees(c.total) || 'Rs 0', `${c.calls} priced call${c.calls === 1 ? '' : 's'}`], ['Average per call', c.per_call ? rupees(c.per_call) : '—', ''], ['Call minutes', String(c.minutes), ''], ['Businesses with spend', String(c.businesses.length), '']].map(([l, v, s]) => h('div', { class: 'kpi' }, h('div', { class: 'l' }, l), h('div', { class: 'v' }, v), s ? h('div', { class: 's' }, s) : null))),
+      h('div', { class: 'card stack' }, h('div', { class: 'row between' }, h('h2', { class: 'sec' }, 'By business'), h('div', { class: 'pills' }, ...[7, 30, 90].map((d) => h('button', { class: 'pill' + (days === d ? ' on' : ''), onclick: () => { days = d; draw(); } }, `${d} days`)))),
+        c.businesses.length ? h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, h('th', {}, 'Business'), h('th', {}, 'Calls'), h('th', {}, 'Phone'), h('th', {}, 'AI + speech'), h('th', {}, 'Voice'), h('th', {}, 'WhatsApp'), h('th', {}, 'Per call'), h('th', { style: 'text-align:right' }, 'Total'))),
+          h('tbody', {}, ...c.businesses.map((b) => h('tr', {}, h('td', {}, h('button', { class: 'link', style: 'font-weight:700', onclick: () => choose(b.id) }, b.name)), h('td', {}, String(b.calls)), h('td', {}, rupees(b.phone) || '—'), h('td', {}, rupees(b.ai + b.speech_to_text) || '—'), h('td', {}, rupees(b.voice) || '—'), h('td', {}, rupees(b.whatsapp) || '—'), h('td', {}, rupees(b.per_call) || '—'), h('td', { style: 'text-align:right;font-weight:700' }, rupees(b.total)))))) : h('div', { class: 'muted' }, 'No priced calls in this period yet.'),
+        h('div', { class: 'small muted' }, 'Choose a business to set its monthly budget.')),
+      h('div', { class: 'grid2' },
+        h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Where the money goes'), c.total ? h('div', { class: 'bar thick' }, ...c.parts.filter((p) => p.amount > 0).map((p) => h('i', { style: `width:${p.share * 100}%;background:${COLORS[p.id]}`, title: `${p.label}: ${rupees(p.amount)}` }))) : h('div', { class: 'muted' }, 'Nothing yet.'),
+          h('div', { class: 'legend' }, ...c.parts.map((p) => h('span', {}, h('i', { style: `background:${COLORS[p.id]}` }), `${p.label} ${rupees(p.amount) || 'Rs 0'}${p.share ? ` (${Math.round(p.share * 100)}%)` : ''}`))), h('div', { class: 'small muted' }, c.note)),
+        h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Spend by day'), c.daily.length ? h('div', { class: 'chart', role: 'img', 'aria-label': 'Spend by day in rupees' }, ...c.daily.map((d) => h('div', { class: 'col', title: `${d.date}: ${rupees(d.total)} · ${d.calls} call${d.calls > 1 ? 's' : ''}`, style: `height:${Math.max(4, d.total / max * 100)}%` }))) : h('div', { class: 'muted' }, 'No calls in this period.'))),
+      h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Prices used for the estimate'), h('table', { class: 'tbl' }, h('tbody', {}, ...c.unit_prices.map((u) => h('tr', {}, h('td', {}, u.item), h('td', { class: 'muted' }, u.price)))))));
+  };
+  mount(page, h('div', {}, h('h1', { class: 'title' }, 'Costs'), h('div', { class: 'sub' }, 'What the assistant costs across all businesses, in rupees. Estimated from published list prices.')), body);
+  await draw();
+}
+
+export async function render(page) {
+  const list = (await A('/admin/businesses')).items;
+  return selectedId() && list.some((b) => b.id === selectedId()) ? businessCosts(page) : platformCosts(page);
 }

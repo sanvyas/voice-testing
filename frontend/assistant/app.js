@@ -1,5 +1,10 @@
 import { h, mount } from '/lab/ui.js';
+import { setBusinessKey } from '/lab/api.js';
 import { A, ic, ICONS } from './net.js';
+
+// A business opens its private link (…/assistant/?k=KEY) once; the key is kept on this device and removed from the address bar.
+const linkKey = new URLSearchParams(location.search).get('k');
+if (linkKey) { setBusinessKey(linkKey); history.replaceState(null, '', location.pathname + location.hash); }
 
 const TABS = [['calls', 'Calls', ICONS.phone, []], ['try', 'Try it', ICONS.mic, []], ['contacts', 'Contacts', ICONS.users, [[9.5, 7, 3.5]]], ['setup', 'Setup', ICONS.sliders, [[14, 8, 2], [10, 16, 2]]]];
 const loaders = { calls: () => import('./views/calls.js'), try: () => import('./views/try.js'), contacts: () => import('./views/contacts.js'), setup: () => import('./views/setup.js'), board: () => import('./views/board.js') };
