@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import hindi_speech
 import llm
 
 ENGINES = {
@@ -135,19 +136,21 @@ def _explain(exc: Exception, label: str) -> str:
     return f"{label}: {detail}"
 
 
-async def synthesize(engine: str, text: str, language: str) -> Speech:
+async def synthesize(engine: str, text: str, language: str, *, phone: bool = False) -> Speech:
     if engine not in ENGINES:
         raise TTSError("This voice is played by your device, not the server.")
     key, _ = key_for(engine)
     if not key:
         raise TTSError(f"{ENGINES[engine]['label']} has no API key yet. Add it in Settings.")
     text = clean_text(text)
+    if (language or "").lower().startswith("hi"):
+        text = clean_text(hindi_speech.normalize(text))  # digits, rupees, times and English words, spoken the Hindi way
     if not text:
         raise TTSError("Nothing to say.")
     started = time.perf_counter()
     try:
         if engine == "google":
-            voice, audio, mime, cost = await _google(key, text, language)
+            voice, audio, mime, cost = await _google(key, text, language, phone)
         else:
             voice, audio, mime, cost = await _chatterbox(key, text, language)
     except TTSError:
@@ -157,9 +160,9 @@ async def synthesize(engine: str, text: str, language: str) -> Speech:
     return Speech(audio, mime, engine, voice, len(text), int((time.perf_counter() - started) * 1000), cost)
 
 
-async def _google(key: str, text: str, language: str):
+async def _google(key: str, text: str, language: str, phone: bool = False):
     voice = google_voice(language)
-    body = {"input": {"text": text}, "voice": {"languageCode": voice[:5], "name": voice}, "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0}}
+    body = {"input": {"text": text}, "voice": {"languageCode": voice[:5], "name": voice}, "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0, **({"effectsProfileId": ["telephony-class-application"]} if phone else {})}}
     response = await llm.http_client().post(GOOGLE_URL, headers={"X-Goog-Api-Key": key}, json=body)
     response.raise_for_status()
     audio = base64.b64decode(response.json().get("audioContent") or "")

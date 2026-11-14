@@ -17,6 +17,7 @@ from collections import OrderedDict
 from datetime import timedelta
 from xml.sax.saxutils import escape, quoteattr
 
+import hindi_speech
 import httpx
 import llm
 import tts
@@ -37,6 +38,7 @@ router = APIRouter()
 MAX_CALLS_PER_DAY = int(os.getenv("ASSISTANT_MAX_CALLS_PER_DAY", "200"))
 MAX_CALLS_PER_CALLER_10MIN = 5
 SILENCE_LIMIT = 2  # empty recordings in a row before we hang up
+RECORD_SILENCE_S = max(1, min(5, int(os.getenv("PHONE_RECORD_SILENCE_S", "2"))))  # seconds of quiet that end the caller's turn; every second here is added to every reply
 _background: set[asyncio.Task] = set()
 
 
@@ -96,23 +98,46 @@ def forbidden() -> Response:
     return Response("Forbidden", status_code=403)
 
 
+_PHRASES: "OrderedDict[tuple[str, str, str], tts.Speech]" = OrderedDict()  # greetings and fixed lines repeat on every call, so keep their audio
+_PHRASE_MAX_CHARS, _PHRASE_KEEP = 220, 64
+_last_tts_ms: dict[str, int] = {}
+
+
 async def speak_xml(text: str, language: str, request: Request, call_id: str | None = None) -> str:
     """<Play> our own voice when a server voice is set up, else Plivo's built-in <Speak> (English only; Hindi needs Google or Chatterbox)."""
     engine = tts.active()
+    language = _voice_language(text, language)
     if engine in tts.ENGINES and tts.key_for(engine)[0]:
         try:
-            await run_db(lambda s: settings_store.tts_check_cap(s, engine, len(tts.clean_text(text))))
-            speech = await tts.synthesize(engine, text, language)
-            await run_db(lambda s: (settings_store.tts_record(s, engine, speech.chars, speech.cost_usd), call_id and service.note_spoken(s, call_id, speech.chars, engine)))
+            clean = tts.clean_text(text)
+            cache_key = (engine, language, clean)
+            speech = _PHRASES.get(cache_key) if len(clean) <= _PHRASE_MAX_CHARS else None
+            if speech is not None:
+                _PHRASES.move_to_end(cache_key)
+                _last_tts_ms[call_id or ""] = 0
+            else:
+                await run_db(lambda s: settings_store.tts_check_cap(s, engine, len(clean)))
+                speech = await tts.synthesize(engine, text, language, phone=True)
+                _last_tts_ms[call_id or ""] = speech.latency_ms
+                await run_db(lambda s: (settings_store.tts_record(s, engine, speech.chars, speech.cost_usd), call_id and service.note_spoken(s, call_id, speech.chars, engine)))
+                if len(clean) <= _PHRASE_MAX_CHARS:
+                    _PHRASES[cache_key] = speech
+                    while len(_PHRASES) > _PHRASE_KEEP:
+                        _PHRASES.popitem(last=False)
             return f"<Play>{escape(base_url(request))}/telephony/audio/{audio_store.put(speech.audio, speech.mime)}.mp3</Play>"
         except (tts.TTSError, ServiceError) as exc:
             logger.warning("server voice failed, using Plivo's voice: %s", exc)
     return f"<Speak>{escape(tts.clean_text(text))}</Speak>"
 
 
+def _voice_language(text: str, default: str) -> str:
+    """Speak with the voice that matches the script of the reply: a Hindi voice reads Devanagari well and English badly, and the reverse."""
+    return "hi-IN" if hindi_speech.has_devanagari(text) else ("en-IN" if default.lower().startswith("hi") or default.lower().startswith("en") else default)
+
+
 def record_xml(request: Request, call_id: str) -> str:
     action = f"{base_url(request)}/telephony/plivo/turn?call={call_id}"
-    return f"<Record action={quoteattr(action)} method=\"POST\" fileFormat=\"mp3\" maxLength=\"25\" timeout=\"3\" playBeep=\"false\" finishOnKey=\"none\" redirect=\"true\"/>"
+    return f"<Record action={quoteattr(action)} method=\"POST\" fileFormat=\"mp3\" maxLength=\"25\" timeout=\"{RECORD_SILENCE_S}\" playBeep=\"false\" finishOnKey=\"none\" redirect=\"true\"/>"
 
 
 def _language(profile: dict) -> str:
@@ -230,9 +255,12 @@ async def _turn(request: Request, call: str, form: dict):
             return xml(await speak_xml("I could not hear you, so I will end the call. Please call again.", "en-IN", request, call), "<Hangup/>")
         return xml(await speak_xml("Sorry, I could not hear that. Could you say it again?", lang, request, call), record_xml(request, call))
 
+    t0 = time.perf_counter()
     try:
         audio = await _download(form.get("RecordUrl", ""))
+        t_download = time.perf_counter()
         heard = await llm.transcribe(audio, "speech.mp3", "audio/mpeg", language=None, retries=1) if len(audio) > 1500 else None
+        t_stt = time.perf_counter()
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not transcribe the recording: %s", exc)
         return await silence()
@@ -245,7 +273,12 @@ async def _turn(request: Request, call: str, form: dict):
     except ServiceError as exc:
         logger.warning("turn failed: %s", exc.message)
         return xml(await speak_xml("Sorry, I am having trouble. Please call again in a few minutes.", "en-IN", request, call), "<Hangup/>")
+    t_llm = time.perf_counter()
     spoken = await speak_xml(result["assistant"]["content"], lang, request, call)
+    t_end = time.perf_counter()
+    logger.info("turn timing call=%s download_ms=%d stt_ms=%d model_ms=%d (llm_only=%s) voice_ms=%d (synth=%s) total_ms=%d record_silence_s=%d",
+                call, (t_download - t0) * 1000, (t_stt - t_download) * 1000, (t_llm - t_stt) * 1000, result.get("latency_ms"), (t_end - t_llm) * 1000,
+                _last_tts_ms.pop(call, None), (t_end - t0) * 1000, RECORD_SILENCE_S)
     return xml(spoken, "<Hangup/>" if result["ended"] else record_xml(request, call))
 
 
