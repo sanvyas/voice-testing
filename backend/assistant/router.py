@@ -17,7 +17,7 @@ from lab.runner import run_db
 from lab.schemas import Strict
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, costs, integrations, prompts, service, tenant, vision, whatsapp
+from . import board, config, costs, integrations, lexicon, prompts, service, tenant, vision, whatsapp
 from .access import admin_only, scope
 
 router = APIRouter(dependencies=[Depends(scope)])
@@ -514,6 +514,34 @@ def get_knowledge(session: Session = Depends(get_session)):
 @router.put("/knowledge")
 def put_knowledge(body: config.KnowledgeIn, session: Session = Depends(get_session)):
     return config.save_knowledge(session, body)
+
+
+class LexiconPut(Strict):
+    scope: str = Field(pattern="^(platform|business)$")
+    entries: list[lexicon.EntryIn] = Field(max_length=lexicon.MAX_ENTRIES)
+
+
+class LexiconTest(Strict):
+    text: str = Field(max_length=600)
+    scope: str = Field(default="business", pattern="^(platform|business)$")
+
+
+@router.get("/lexicon", dependencies=ADMIN)
+def get_lexicon(scope: str = Query("business", pattern="^(platform|business)$"), session: Session = Depends(get_session)):
+    return lexicon.view(session, scope)
+
+
+@router.put("/lexicon", dependencies=ADMIN)
+def put_lexicon(body: LexiconPut, session: Session = Depends(get_session)):
+    return lexicon.save(session, body.scope, body.entries)
+
+
+@router.post("/lexicon/test", dependencies=ADMIN)
+def test_lexicon(body: LexiconTest, session: Session = Depends(get_session)):
+    """Show how a sentence is rewritten before the Hindi voice reads it (the list as currently saved, plus the number and word rules)."""
+    import hindi_speech
+    spoken = hindi_speech.normalize(lexicon.apply(body.text, lexicon.effective(session)))
+    return {"spoken": spoken, "changed": spoken != body.text}
 
 
 class PromptsPut(Strict):

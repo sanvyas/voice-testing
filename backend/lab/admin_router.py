@@ -270,8 +270,14 @@ async def transcribe(file: UploadFile = File(...), language: str = Form("")):
         raise ServiceError("Empty recording", 422)
     if len(audio) > MAX_AUDIO_BYTES:
         raise ServiceError("Recording is too long (limit about 12 MB).", 413)
+    hint = None
+    try:  # the owner's local words help the recogniser; lab pages without a business just skip it
+        from assistant import lexicon
+        hint = lexicon.stt_prompt(await lexicon.current())
+    except Exception:  # noqa: BLE001
+        hint = None
     try:
-        result = await llm.transcribe(audio, file.filename or "audio.webm", file.content_type or "", language=language or None)
+        result = await llm.transcribe(audio, file.filename or "audio.webm", file.content_type or "", language=language or None, prompt=hint or None)
     except llm.LLMError as exc:
         raise ServiceError(str(exc), 502) from None
     return {"text": result.text, "latency_ms": result.latency_ms, "model": result.model}

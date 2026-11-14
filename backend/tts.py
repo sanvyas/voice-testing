@@ -136,7 +136,7 @@ def _explain(exc: Exception, label: str) -> str:
     return f"{label}: {detail}"
 
 
-async def synthesize(engine: str, text: str, language: str, *, phone: bool = False) -> Speech:
+async def synthesize(engine: str, text: str, language: str, *, phone: bool = False, lexicon: list | None = None) -> Speech:
     if engine not in ENGINES:
         raise TTSError("This voice is played by your device, not the server.")
     key, _ = key_for(engine)
@@ -144,6 +144,9 @@ async def synthesize(engine: str, text: str, language: str, *, phone: bool = Fal
         raise TTSError(f"{ENGINES[engine]['label']} has no API key yet. Add it in Settings.")
     text = clean_text(text)
     if (language or "").lower().startswith("hi"):
+        if lexicon:
+            from assistant import lexicon as lex  # local import: the assistant package imports this module
+            text = lex.apply(text, lexicon)  # the owner's own words and spellings first
         text = clean_text(hindi_speech.normalize(text))  # digits, rupees, times and English words, spoken the Hindi way
     if not text:
         raise TTSError("Nothing to say.")

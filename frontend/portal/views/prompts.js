@@ -74,6 +74,45 @@ export async function render(page) {
             data.history.length ? h('div', {}, ...data.history.map((v) => h('div', { class: 'hist' }, h('div', {}, h('b', {}, `Version ${v.version}`), h('div', { class: 'small muted' }, `${ago(v.at)}${v.kinds.length ? ' · ' + v.kinds.join(', ') : ' · built-in text'}`)),
               h('button', { class: 'plain', onclick: async () => { if (await ask(`Go back to version ${v.version}? Your current text is kept in the history.`, { yes: 'Restore' })) { data = await A('/prompts/restore', { method: 'POST', body: { scope, version: v.version } }); toast(`Restored version ${v.version}`); draw(); } } }, 'Restore'))))
               : h('div', { class: 'muted' }, data.version ? 'No earlier versions kept.' : 'No changes saved yet. Each save keeps the one before it, up to 20.')))));
+    body.append(lexiconCard());
     refreshChips(); refreshStatus(); refreshPreview();
+  }
+
+  /* Local words and how to say them: used by the voice, the listener and the AI prompt. */
+  function lexiconCard() {
+    const box = h('div', { class: 'card stack', id: 'lexicon' }); let st = null; let rows = []; let saved = '[]';
+    const who = scope === 'business' && sel ? `for ${sel.name}` : 'for every business';
+    const keep = () => JSON.stringify(rows.filter((r) => r.word.trim() && r.say.trim()));
+    async function load() { st = await A(`/lexicon?scope=${scope}`); rows = st.entries.map((e) => ({ word: e.word, say: e.say, meaning: e.meaning || '' })); saved = keep(); paint(); }
+    function paint() {
+      const save = h('button', { class: 'btn', style: 'width:auto', disabled: keep() === saved }, 'Save words');
+      const grid = h('div', { class: 'stack', style: 'gap:8px' });
+      const drawRows = () => mount(grid, h('div', { class: 'small muted', style: 'display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr 40px;gap:8px;font-weight:700' }, h('span', {}, 'Word, as written (add other spellings with commas)'), h('span', {}, 'Say it as'), h('span', {}, 'Meaning for the AI (optional)'), h('span', {})),
+        ...rows.map((r, i) => h('div', { style: 'display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr 40px;gap:8px;align-items:center' },
+          h('input', { value: r.word, placeholder: 'kaju katli, kaju kathli', 'aria-label': 'Word', oninput: (e) => { r.word = e.target.value; save.disabled = keep() === saved; } }),
+          h('input', { value: r.say, placeholder: 'काजू कतली', 'aria-label': 'Say it as', oninput: (e) => { r.say = e.target.value; save.disabled = keep() === saved; } }),
+          h('input', { value: r.meaning, placeholder: 'cashew fudge sweet', 'aria-label': 'Meaning', oninput: (e) => { r.meaning = e.target.value; save.disabled = keep() === saved; } }),
+          h('button', { class: 'plain', 'aria-label': 'Remove this word', onclick: () => { rows.splice(i, 1); drawRows(); save.disabled = keep() === saved; } }, '✕'))));
+      drawRows();
+      const add = h('button', { class: 'plain', onclick: () => { rows.push({ word: '', say: '', meaning: '' }); drawRows(); } }, '+ Add a word');
+      const names = scope === 'business' && sel ? h('button', { class: 'plain', onclick: () => { for (const w of [sel.name, sel.owner_name].filter(Boolean)) if (!rows.some((r) => r.word.toLowerCase() === w.toLowerCase())) rows.push({ word: w, say: '', meaning: '' }); drawRows(); save.disabled = keep() === saved; } }, '+ Add the business and owner name') : null;
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        try { st = await A('/lexicon', { method: 'PUT', body: { scope, entries: JSON.parse(keep()) } }); rows = st.entries.map((e) => ({ word: e.word, say: e.say, meaning: e.meaning || '' })); saved = keep(); toast('Saved. The next call uses these words.'); paint(); }
+        catch (e) { toast(e.message, true); save.disabled = false; }
+      });
+      const test = h('input', { placeholder: 'Try: babuji sweets में काजू कतली ₹480 किलो है, शाम 5 बजे आइए', style: 'flex:1', 'aria-label': 'Sentence to try' }); const out = h('div', { class: 'locked', style: 'min-height:40px' }, 'The spoken form shows here.');
+      const run = h('button', { class: 'plain', onclick: async () => { try { const r = await A('/lexicon/test', { method: 'POST', body: { text: test.value, scope } }); out.textContent = r.spoken || ''; } catch (e) { out.textContent = e.message; } } }, 'Show how it will be said');
+      const table = (items) => h('div', { class: 'small', style: 'display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:4px 12px;max-height:260px;overflow:auto' }, ...items.flatMap((e) => [h('span', {}, e.word), h('span', { style: 'font-weight:700' }, e.say), h('span', { class: 'muted' }, e.meaning || '')]));
+      mount(box,
+        h('div', {}, h('h2', { class: 'sec' }, `Local words and how to say them (${who})`),
+          h('div', { class: 'small muted' }, 'List the words your callers use, and how each one should sound. The voice says them your way, the listener expects them, and the AI learns what they mean. Write “Say it as” in Devanagari for Hindi. A common starter list is already built in; yours wins when a word is on both.')),
+        grid, h('div', { class: 'row' }, add, names), h('div', { class: 'row' }, save),
+        h('div', { class: 'stack', style: 'gap:8px' }, h('div', { class: 'small', style: 'font-weight:700' }, 'Test a sentence (uses the words as last saved)'), h('div', { class: 'row' }, test, run), out),
+        st.inherited && st.inherited.length ? h('details', {}, h('summary', { style: 'cursor:pointer;font-weight:700' }, `Platform words that also apply (${st.inherited.length})`), h('div', { style: 'margin-top:8px' }, table(st.inherited))) : null,
+        h('details', {}, h('summary', { style: 'cursor:pointer;font-weight:700' }, `Built-in starter words (${st.builtin.length})`), h('div', { style: 'margin-top:8px' }, table(st.builtin))));
+    }
+    load().catch((e) => { box.textContent = e.message; });
+    return box;
   }
 }

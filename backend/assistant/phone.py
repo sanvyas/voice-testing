@@ -30,7 +30,7 @@ from lab.models import Business, Call, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError
 
-from . import config, prompts, service, tenant
+from . import config, lexicon, prompts, service, tenant
 
 logger = logging.getLogger("ai_therapy.assistant.phone")
 router = APIRouter()
@@ -101,6 +101,7 @@ def forbidden() -> Response:
 _PHRASES: "OrderedDict[tuple[str, str, str], tts.Speech]" = OrderedDict()  # greetings and fixed lines repeat on every call, so keep their audio
 _PHRASE_MAX_CHARS, _PHRASE_KEEP = 220, 64
 _last_tts_ms: dict[str, int] = {}
+lexicon.LISTENERS.append(_PHRASES.clear)  # a changed word list means old cached audio is stale
 
 
 async def speak_xml(text: str, language: str, request: Request, call_id: str | None = None) -> str:
@@ -117,7 +118,7 @@ async def speak_xml(text: str, language: str, request: Request, call_id: str | N
                 _last_tts_ms[call_id or ""] = 0
             else:
                 await run_db(lambda s: settings_store.tts_check_cap(s, engine, len(clean)))
-                speech = await tts.synthesize(engine, text, language, phone=True)
+                speech = await tts.synthesize(engine, text, language, phone=True, lexicon=await lexicon.current())
                 _last_tts_ms[call_id or ""] = speech.latency_ms
                 await run_db(lambda s: (settings_store.tts_record(s, engine, speech.chars, speech.cost_usd), call_id and service.note_spoken(s, call_id, speech.chars, engine)))
                 if len(clean) <= _PHRASE_MAX_CHARS:
@@ -259,7 +260,7 @@ async def _turn(request: Request, call: str, form: dict):
     try:
         audio = await _download(form.get("RecordUrl", ""))
         t_download = time.perf_counter()
-        heard = await llm.transcribe(audio, "speech.mp3", "audio/mpeg", language=None, retries=1) if len(audio) > 1500 else None
+        heard = await llm.transcribe(audio, "speech.mp3", "audio/mpeg", language=None, retries=1, prompt=lexicon.stt_prompt(await lexicon.current(), profile)) if len(audio) > 1500 else None
         t_stt = time.perf_counter()
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not transcribe the recording: %s", exc)

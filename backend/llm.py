@@ -246,7 +246,7 @@ async def chat(
 
 async def transcribe(
     audio: bytes, filename: str, content_type: str, *, language: str | None = None,
-    provider: str | None = None, model: str | None = None, retries: int = 1,
+    provider: str | None = None, model: str | None = None, retries: int = 1, prompt: str | None = None,
 ) -> Transcript:
     """Transcribe a recorded clip (webm/ogg/mp4/m4a/wav/mp3) with an OpenAI-compatible Whisper endpoint (Groq by default)."""
     cfgs = provider_configs()
@@ -259,6 +259,8 @@ async def transcribe(
     data = {"model": use_model, "response_format": "json", "temperature": "0"}
     if language:
         data["language"] = language.split("-")[0].lower()  # Whisper wants ISO-639-1: en-IN -> en
+    if prompt:
+        data["prompt"] = prompt[:800]  # a list of names and local words nudges Whisper to spell them right
     last = "unknown error"
     for attempt in range(retries + 1):
         started = time.perf_counter()

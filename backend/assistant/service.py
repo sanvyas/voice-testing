@@ -18,7 +18,7 @@ from lab.models import Call, CallNote, CallTurn, Contact, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, prompts, tenant, whatsapp
+from . import board, config, lexicon, prompts, tenant, whatsapp
 
 logger = logging.getLogger("ai_therapy.assistant")
 
@@ -219,7 +219,7 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
             raise ServiceError("This call has ended.", 409)
         profile = get_profile(session)
         system = prompts.receptionist_prompt(profile, board.shareable(session), config.resolve(session, "assistant"), caller_name=call.caller_name, caller_number=call.caller_number,
-                                             today=utcnow().strftime("%d %B %Y"))
+                                             today=utcnow().strftime("%d %B %Y"), local_words=lexicon.local_words_block(lexicon.effective(session)))
         return system, _history(call), len(call.turns)
 
     system, history, count = await run_db(prepare)

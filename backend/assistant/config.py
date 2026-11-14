@@ -183,7 +183,8 @@ def render_preview(session: Session, kind: str, text: str, profile: dict, items)
     """What the model would actually receive for ``text``, filled in with this business's real details."""
     if kind not in prompts.KINDS:
         raise ServiceError("Unknown prompt.", 422)
-    values = prompts.values_for(profile, items, caller_name="Ravi", caller_number="+919876543210", today=utcnow().strftime("%d %B %Y"))
+    from . import lexicon
+    values = prompts.values_for(profile, items, caller_name="Ravi", caller_number="+919876543210", today=utcnow().strftime("%d %B %Y"), local_words=lexicon.local_words_block(lexicon.effective(session)))
     body = prompts.fill((text or "").strip() or prompts.DEFAULTS[kind], values).rstrip()
     locked = prompts.fill(prompts.LOCKED.get(kind, ""), values)
     return {"text": body, "locked": locked, "unknown": prompts.unknown_variables(kind, text or ""), "used": prompts.used_variables(text or ""),
