@@ -36,4 +36,17 @@ Needs the video from step 2 and a Whisper service. The project already uses Groq
 Take 5 to 8 frames (`ffmpeg -i video.mp4 -vf fps=1/3 f_%02d.png`) and view them to describe visuals, text overlays, hook and branding. Say which frames you actually viewed.
 
 ## Report
-For every post state: what you read (caption / counts / transcript / frames), what was blocked, and never invent numbers, captions or comments. Comments are not available through these steps.
+For every post state: what you read (caption / counts / transcript / frames), what was blocked, and never invent numbers, captions or comments. Comments: yt-dlp's info.json can include a sample of top-level comments (12 of 22 on the test reel); say it is a sample.
+
+## Helper
+`bash .claude/skills/instagram-post-reader/read_post.sh "<POST_URL>" <outdir>` runs steps 1, 2 and 4 and prints what it got.
+
+## Whole profile ("every post")
+There is no free, login-free way to LIST a profile's posts: Instaloader redirects to the login page and yt-dlp's profile extractor is marked broken. Do not work around it. Ways to get the list:
+1. The user pastes the post/reel links (or the account's top 5 to 20); run `read_post.sh` on each, then summarise the set (hooks, topics, formats, branding).
+2. `scrapecreators-api` if its key is valid (lists posts and reels with counts).
+3. A throwaway account's cookies exported by the user, used with Instaloader `--load-cookies`.
+Transcripts need a Whisper service; if no key is available, say the audio was not transcribed (many reels are text-on-screen with music only).
+
+## Verified
+Tested on a public reel: caption, counts, 12 comments and the video (after allowing the exact CDN hosts `scontent-*.cdninstagram.com` shown in the yt-dlp error) all came through; profile listing did not.
