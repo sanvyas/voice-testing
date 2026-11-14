@@ -57,3 +57,13 @@ Source: seven public reels read with the `instagram-post-reader` skill (caption,
 
 ## Open questions this study could not answer
 Audio and voice-over (not transcribed), watch time and shares (not public), and what the captions' hashtags did for reach.
+
+## Munshi format library (vary the format, not just the words)
+Do not make a batch with one look. Each reel should use a different format and prove a different offer. Built so far (Remotion, `reels5.tsx`, `reels6.tsx`):
+- **24-hour dial** (24x7: sleep, travel, lunch, family, busy line)
+- **Self-sorting inbox** (spam set aside, "Needs you" highlighted, WhatsApp-answered, always-ring VIP)
+- **Race for the order** (two shops, progress bars: the missed call loses the order)
+- **Call-recording player** with live captions (polite, price from board, no promise, Hindi/English, summary + WhatsApp confirmation). Needs voices with a commercial licence: the free Hindi Piper voices (AI4Bharat/IIT Madras data) are non-commercial only, so do not use them in ads; use the owner's own recording, Google Cloud TTS or Chatterbox (DeepInfra).
+- **Photo of the rate list -> board; spoken update; 3-step setup**
+- Earlier: end-to-end story (F1), KPIs (F3), bottleneck list (F4), no-misbehaving (F5), number reveal (G3), phone-ring choice (G1), half-the-job action chips (G2), inside-a-call (G4).
+Ideas not yet built: owner's day vs Munshi's day split screen, festival rush (many calls at once), "what Munshi never says" strike-through list, a customer-language montage, weekly report card, WhatsApp-first query handling.
