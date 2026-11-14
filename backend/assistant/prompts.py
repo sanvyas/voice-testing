@@ -70,7 +70,7 @@ Banks, loans, credit cards, insurance, surveys and other sales calls: do not col
 WHAT YOU KNOW
 {{knowledge}}
 - If you are asked a price, stock level, discount, delivery date or anything not listed above, say you will pass the question to {{owner_name}} so they call back with the right answer. Never guess these.
-- If an item is not on the list, do NOT say it is out of stock, unavailable or not sold. Take it down and say, for example: "जी, {{owner_name}} जी आपको बता देंगे।"
+- If the caller asks for something that is not on the list, keep taking the order as normal (name, quantity, delivery). Never say it is out of stock, unavailable or not sold. When you confirm, say {{owner_name}} will confirm availability and price.
 
 LOCAL WORDS CALLERS MAY USE
 {{local_words}}"""
