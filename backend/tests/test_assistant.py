@@ -617,3 +617,13 @@ def test_a_question_the_assistant_could_not_answer_always_needs_the_owner():
 
 def test_todo_wording_is_about_the_caller_not_the_owner():
     assert "never name the owner as the person to call" in prompts.SUMMARY_SYSTEM
+
+
+def test_a_hindi_request_without_a_question_mark_does_not_end_the_call():
+    from assistant import service
+    assert service._clean_reply("जी, नाम बताइए। <<END>>") == ("जी, नाम बताइए।", False)
+    assert service._clean_reply("सुनील जी, कल शाम तक कौन सा समय ठीक रहेगा <<END>>")[1] is False
+    assert service._clean_reply("What is your name? <<END>>")[1] is False
+    assert service._clean_reply("ठीक है सुनील जी, रमेश जी आपको कॉल करेंगे। धन्यवाद। <<END>>")[1] is True
+    assert service._clean_reply("Thanks, I will tell Ramesh. <<END>>")[1] is True
+    assert service._clean_reply("जी, नाम बताइए।")[1] is False

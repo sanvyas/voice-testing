@@ -184,12 +184,23 @@ def _history(call: Call) -> list[dict]:
     return [{"role": "assistant" if t.role == "assistant" else "user", "content": t.content} for t in call.turns]
 
 
+_ASK = re.compile(r"(\?|？|बताइए|बताइये|बताएं|बताएँ|बताओ|बता\s?दीजिए|बता\s?दीजिये|क्या|कौन|कब|कहाँ|कहां|कितन[ेा]|कैसे|कौन\s?सा|\b(what|which|when|where|how|who|please tell|your name|could you|can you|may i)\b)", re.I)
+
+
+def _asks_something(text: str) -> bool:
+    """True when the last sentence asks the caller for something. Hindi often asks without a question mark ("नाम बताइए।")."""
+    last = [p for p in re.split(r"[।.!?？]\s*", text.strip()) if p.strip()]
+    sentences = re.findall(r"[^।.!?？]+[।.!?？]?", text.strip())
+    tail = (sentences[-1] if sentences else "").strip() or (last[-1] if last else "")
+    return bool(_ASK.search(tail))
+
+
 def _clean_reply(text: str) -> tuple[str, bool]:
     ended = prompts.END_MARK in text
     text = text.replace(prompts.END_MARK, "")
     text = re.sub(r"[*_`#>]+", "", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if ended and text.endswith(("?", "？")):  # a question needs an answer: never hang up on it
+    if ended and _asks_something(text):  # a question or request needs an answer: never hang up on it
         ended = False
     return text, ended
 
