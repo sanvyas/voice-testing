@@ -3,6 +3,8 @@
 ## Seeing social media posts, profiles, comments and ads
 When the user shares a social media link (Instagram, TikTok, YouTube, X, LinkedIn, Facebook, Reddit, Threads, Pinterest and others) or asks about a creator, post, reel, comments or ads, **do not say you cannot see it**. Fetch the public data with the `scrapecreators-api` skill in `.claude/skills/`, and use the narrower workflow skill when it fits (comment-mining, competitor-social-research, outlier-post-finder, transcript-intelligence, ad-library-teardown, and so on). Public data only.
 
+**One Instagram post or reel link:** use the `instagram-post-reader` skill (embed page + yt-dlp + Whisper). It is free but unverified on live posts until a real link is tested; report exactly what was and was not readable.
+
 **Instagram first choice (free):** use the `instagram-reader` skill (Instaloader). It reads public profile info (bio, followers, verified) with no key. Posts, reels and comments need a login; if only profile info is available, say so and offer the options in that skill instead of claiming you can see the posts. For other platforms, or when the ScrapeCreators key works, use `scrapecreators-api`.
 
 How the key works in this cloud environment:
