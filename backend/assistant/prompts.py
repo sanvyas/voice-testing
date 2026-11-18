@@ -112,7 +112,7 @@ LOCKED_SUMMARY = ('FORMAT (fixed): reply with ONE JSON object and nothing else, 
                   '- "order": {"items": [{"name": the item as the caller said it, "qty_n": a number or null, "unit": "kg", "packet" and so on or "", "board_name": the exact name from BOARD ITEMS if the caller asked for one of them, else ""}], '
                   '"mode": "delivery", "pickup" or "", "when": a short phrase or "", "address": the delivery address the caller gave or ""}. If the call was not an order: {"items": [], "mode": "", "when": "", "address": ""}.\n'
                   '- "keep": at most 3 short things worth remembering that are not tasks (the best time to call, an old payment the caller mentioned). Only what the caller said.\n'
-                  '- "replies": at most 2 objects {"label": at most 4 words, "text": a WhatsApp message the owner could send the caller, in the caller\'s language, polite, one or two short sentences}. Never state a price, discount or time that was not given in the transcript.')
+                  '- "replies": at most 2 objects {"label": at most 4 words, "text": a WhatsApp message the owner could send the caller}. Write the label and the text in the caller\'s language (Hindi in Devanagari for Hindi callers), polite, one or two short sentences. A reply only acknowledges, asks for a missing detail (for example the address), or says the owner will call. It never confirms an order, stock, delivery, a price, a discount or a time, and never promises anything: the owner decides that.')
 
 DEFAULTS = {"assistant": DEFAULT_ASSISTANT, "greeting_hi": DEFAULT_GREETINGS["greeting_hi"], "greeting_en": DEFAULT_GREETINGS["greeting_en"], "summary": DEFAULT_SUMMARY}
 LOCKED = {"assistant": LOCKED_ASSISTANT, "summary": LOCKED_SUMMARY}

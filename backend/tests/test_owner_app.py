@@ -29,7 +29,7 @@ def test_the_structured_summary_is_saved_with_the_call(client, ai):
     assert d["ask"] == "Rate and delivery time" and d["order"]["mode"] == "delivery" and d["order"]["items"][0]["board_name"] == "Atta"
     assert d["keep"] == ["Best time to call: before 9 pm"] and [r["label"] for r in d["replies"]] == ["Call tonight", "Reply"]
     prompt = ai.calls[-1][0]["content"]
-    assert "BOARD ITEMS: Atta" in prompt and '"ask"' in prompt and "Never state a price" in prompt
+    assert "BOARD ITEMS: Atta" in prompt and '"ask"' in prompt and "never confirms an order" in prompt
 
 
 def test_a_messy_structured_summary_never_breaks_a_call(client, ai):
