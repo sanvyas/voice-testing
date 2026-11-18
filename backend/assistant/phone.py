@@ -30,7 +30,7 @@ from lab.models import Business, Call, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError
 
-from . import config, lexicon, prompts, service, tenant
+from . import config, lexicon, prompts, service, tenant, voices
 
 logger = logging.getLogger("ai_therapy.assistant.phone")
 router = APIRouter()
@@ -98,7 +98,7 @@ def forbidden() -> Response:
     return Response("Forbidden", status_code=403)
 
 
-_PHRASES: "OrderedDict[tuple[str, str, str], tts.Speech]" = OrderedDict()  # greetings and fixed lines repeat on every call, so keep their audio
+_PHRASES: "OrderedDict[tuple[str, str, str, str], tts.Speech]" = OrderedDict()  # greetings and fixed lines repeat on every call, so keep their audio
 _PHRASE_MAX_CHARS, _PHRASE_KEEP = 220, 64
 _last_tts_ms: dict[str, int] = {}
 lexicon.LISTENERS.append(_PHRASES.clear)  # a changed word list means old cached audio is stale
@@ -111,14 +111,15 @@ async def speak_xml(text: str, language: str, request: Request, call_id: str | N
     if engine in tts.ENGINES and tts.key_for(engine)[0]:
         try:
             clean = tts.clean_text(text)
-            cache_key = (engine, language, clean)
+            voice_id = await voices.current()
+            cache_key = (engine, language, clean, voice_id)
             speech = _PHRASES.get(cache_key) if len(clean) <= _PHRASE_MAX_CHARS else None
             if speech is not None:
                 _PHRASES.move_to_end(cache_key)
                 _last_tts_ms[call_id or ""] = 0
             else:
                 await run_db(lambda s: settings_store.tts_check_cap(s, engine, len(clean)))
-                speech = await tts.synthesize(engine, text, language, phone=True, lexicon=await lexicon.current())
+                speech = await tts.synthesize(engine, text, language, phone=True, lexicon=await lexicon.current(), voice_id=voice_id)
                 _last_tts_ms[call_id or ""] = speech.latency_ms
                 await run_db(lambda s: (settings_store.tts_record(s, engine, speech.chars, speech.cost_usd), call_id and service.note_spoken(s, call_id, speech.chars, engine)))
                 if len(clean) <= _PHRASE_MAX_CHARS:

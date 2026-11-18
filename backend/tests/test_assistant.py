@@ -474,8 +474,10 @@ def test_whatsapp_only_mode_shows_the_reply_instead_of_starting_a_call(client, a
     profile(client, mode="reply", address="12 Market Road", hours="9am to 8pm")
     r = client.post(f"{API}/calls", json={}).json()
     assert r["reply_only"] is True and r["call"] is None
-    for must in ("Sharma Traders", "12 Market Road", "9am to 8pm", "Basmati rice, 5 kg Rs 450", "Kaju katli, 1 kg Rs 900 (sold out)"):
+    for must in ("Sharma Traders", "12 Market Road", "9am to 8pm"):
         assert must in r["preview"]
+    for never in ("Rs 450", "Rs 900", "Basmati"):  # Munshi never sends a price on its own: the owner confirms rates in a reply
+        assert never not in r["preview"]
     assert len(ai.calls) == 0
 
 
@@ -533,7 +535,7 @@ def test_a_test_whatsapp_goes_to_the_owner_with_the_real_template(client):
     assert req.url.path == "/v21.0/123456789012345/messages" and req.headers["authorization"] == "Bearer EAAGtesttoken123"
     assert sent["to"] == "919811111111" and sent["type"] == "template" and sent["template"]["name"] == "missed_call_reply"
     params = [p["text"] for p in sent["template"]["components"][0]["parameters"]]
-    assert params[0] == "Sharma Traders" and "12 Market Road" in params[1] and "Basmati rice, 5 kg Rs 450" in params[1] and "\n" not in params[1]
+    assert params[0] == "Sharma Traders" and "12 Market Road" in params[1] and "Rs 450" not in params[1] and "\n" not in params[1]
 
 
 def test_whatsapp_errors_are_explained(client):

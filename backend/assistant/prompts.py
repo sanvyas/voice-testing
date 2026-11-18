@@ -11,7 +11,7 @@ END_MARK = "<<END>>"
 CATEGORIES = ("order", "inquiry", "payment", "complaint", "appointment", "personal", "spam", "other")
 IMPORTANCE = ("action", "fyi", "ignore")
 
-LANGUAGE_NAMES = {"hi": "Hindi", "en": "English", "mr": "Marathi", "gu": "Gujarati", "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "kn": "Kannada", "ml": "Malayalam", "pa": "Punjabi"}
+LANGUAGE_NAMES = {"hi": "Hindi", "en": "English", "mr": "Marathi", "gu": "Gujarati", "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "kn": "Kannada", "ml": "Malayalam", "pa": "Punjabi", "hing": "Hinglish"}
 
 # --- the templates ------------------------------------------------------------------------
 
@@ -89,8 +89,8 @@ ENDING THE CALL
 Never end the call in a message that asks the caller a question. When you have what {{owner_name}} needs, confirm it in one sentence (for example: "I'll tell {{owner_name}} you need 20 packets and they will call you back"), thank the caller, and end that last message with <<END>>. Never write <<END>> before that point."""
 
 DEFAULT_GREETINGS = {
-    "greeting_hi": "नमस्ते, आप {{business_name}} से बात कर रहे हैं। {{owner_name}} अभी व्यस्त हैं, मैं उनका AI असिस्टेंट हूँ। बताइए, क्या काम है?",
-    "greeting_en": "Hello, you've reached {{business_name}}. {{owner_name}} can't take your call right now. I'm their AI assistant. How can I help you?",
+    "greeting_hi": "नमस्ते, मैं Munshi हूँ, {{business_name}} का AI सहायक। {{owner_name}} जी अभी फ़ोन नहीं उठा सकते। बताइए?",
+    "greeting_en": "Namaste, this is Munshi, the AI assistant of {{business_name}}. {{owner_name}} cannot take the call right now. How can I help?",
 }
 
 DEFAULT_SUMMARY = f"""You write call notes for {{{{owner_name}}}}, who runs {{{{business_name}}}} in India. They read these on a phone between customers, so be SHORT. You are given the transcript of a call that their AI assistant answered. Reply with ONE JSON object and nothing else, in English, with exactly these keys:
@@ -106,7 +106,13 @@ Use only facts that appear in the transcript. Never invent names, numbers, quant
 
 # Always added after the call-notes text. Not editable.
 LOCKED_SUMMARY = ('FORMAT (fixed): reply with ONE JSON object and nothing else, with exactly these keys: "summary", "caller_name", "category", '
-                  '"importance", "action_items", "unanswered", "callback_number", "language". Never add other text.')
+                  '"importance", "action_items", "unanswered", "callback_number", "language", "ask", "order", "keep", "replies". Never add other text.\n'
+                  'The last four keys:\n'
+                  '- "ask": at most 6 words: what the owner must tell or give the caller (for example "Rate and delivery time", "Send the bill"). "" if nothing.\n'
+                  '- "order": {"items": [{"name": the item as the caller said it, "qty_n": a number or null, "unit": "kg", "packet" and so on or "", "board_name": the exact name from BOARD ITEMS if the caller asked for one of them, else ""}], '
+                  '"mode": "delivery", "pickup" or "", "when": a short phrase or "", "address": the delivery address the caller gave or ""}. If the call was not an order: {"items": [], "mode": "", "when": "", "address": ""}.\n'
+                  '- "keep": at most 3 short things worth remembering that are not tasks (the best time to call, an old payment the caller mentioned). Only what the caller said.\n'
+                  '- "replies": at most 2 objects {"label": at most 4 words, "text": a WhatsApp message the owner could send the caller, in the caller\'s language, polite, one or two short sentences}. Never state a price, discount or time that was not given in the transcript.')
 
 DEFAULTS = {"assistant": DEFAULT_ASSISTANT, "greeting_hi": DEFAULT_GREETINGS["greeting_hi"], "greeting_en": DEFAULT_GREETINGS["greeting_en"], "summary": DEFAULT_SUMMARY}
 LOCKED = {"assistant": LOCKED_ASSISTANT, "summary": LOCKED_SUMMARY}
@@ -155,9 +161,10 @@ def knowledge_block(profile: dict, items=()) -> str:
     return "\n".join(x for x in facts if x)
 
 
-def _self_forms() -> str:
-    import tts
-    return "feminine (मैं बोल रही हूँ, मैं बता दूँगी)" if (tts._runtime.get("google_gender") or "F")[:1].upper() == "F" else "masculine (मैं बोल रहा हूँ, मैं बता दूँगा)"
+def _self_forms(profile: dict | None = None) -> str:
+    """Hindi verbs carry the speaker's gender, so they follow the voice this business chose."""
+    from . import voices
+    return "feminine (मैं बोल रही हूँ, मैं बता दूँगी)" if voices.gender_of((profile or {}).get("voice")) == "F" else "masculine (मैं बोल रहा हूँ, मैं बता दूँगा)"
 
 
 def values_for(profile: dict, items=(), *, caller_name: str = "", caller_number: str = "", today: str = "", local_words: str = "") -> dict[str, str]:
@@ -166,7 +173,7 @@ def values_for(profile: dict, items=(), *, caller_name: str = "", caller_number:
         "business_name": business, "owner_name": owner, "about": profile.get("about", ""), "address": profile.get("address", ""), "hours": profile.get("hours", ""),
         "languages": ", ".join(LANGUAGE_NAMES.get(c, c) for c in (profile.get("languages") or ["en"])), "faq": profile.get("faq", ""), "rules": profile.get("rules", ""),
         "board": board_block(profile, items), "knowledge": knowledge_block(profile, items), "mode": profile.get("mode", "message"),
-        "caller_name": caller_name, "caller_number": caller_number, "today": today, "local_words": local_words or "(none listed)", "self_forms": _self_forms(),
+        "caller_name": caller_name, "caller_number": caller_number, "today": today, "local_words": local_words or "(none listed)", "self_forms": _self_forms(profile),
     }
 
 

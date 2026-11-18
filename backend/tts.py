@@ -81,7 +81,7 @@ def cap_chars(engine: str) -> int:
     return int(raw) if raw.isdigit() else ENGINES[engine]["default_cap"]
 
 
-def google_voice(language: str, tier: str | None = None, gender: str | None = None) -> str:
+def google_voice(language: str, tier: str | None = None, gender: str | None = None, pick: int = 0) -> str:
     """Pick a voice name like hi-IN-Wavenet-A. Falls back to Standard when a language has no WaveNet voice."""
     locale = _locale(language)
     tiers = _VOICES.get(locale)
@@ -91,8 +91,9 @@ def google_voice(language: str, tier: str | None = None, gender: str | None = No
     gender = (gender or _runtime["google_gender"])[:1].upper()
     use = tier if tier in tiers else next(iter(tiers))
     options = tiers[use]
-    pick = next((v for v in options if v[1] == gender), options[0])
-    return f"{locale}-{use}-{pick[0]}"
+    same = [v for v in options if v[1] == gender] or options
+    choice = same[pick % len(same)]
+    return f"{locale}-{use}-{choice[0]}"
 
 
 def _locale(language: str) -> str:
@@ -136,7 +137,7 @@ def _explain(exc: Exception, label: str) -> str:
     return f"{label}: {detail}"
 
 
-async def synthesize(engine: str, text: str, language: str, *, phone: bool = False, lexicon: list | None = None) -> Speech:
+async def synthesize(engine: str, text: str, language: str, *, phone: bool = False, lexicon: list | None = None, voice_id: str | None = None) -> Speech:
     if engine not in ENGINES:
         raise TTSError("This voice is played by your device, not the server.")
     key, _ = key_for(engine)
@@ -153,7 +154,7 @@ async def synthesize(engine: str, text: str, language: str, *, phone: bool = Fal
     started = time.perf_counter()
     try:
         if engine == "google":
-            voice, audio, mime, cost = await _google(key, text, language, phone)
+            voice, audio, mime, cost = await _google(key, text, language, phone, voice_id)
         else:
             voice, audio, mime, cost = await _chatterbox(key, text, language)
     except TTSError:
@@ -163,8 +164,13 @@ async def synthesize(engine: str, text: str, language: str, *, phone: bool = Fal
     return Speech(audio, mime, engine, voice, len(text), int((time.perf_counter() - started) * 1000), cost)
 
 
-async def _google(key: str, text: str, language: str, phone: bool = False):
-    voice = google_voice(language)
+async def _google(key: str, text: str, language: str, phone: bool = False, voice_id: str | None = None):
+    if voice_id:
+        from assistant import voices  # local import: the assistant package imports this module
+        v = voices.get(voice_id)
+        voice = google_voice(language, gender=v["gender"], pick=v["pick"])
+    else:
+        voice = google_voice(language)
     body = {"input": {"text": text}, "voice": {"languageCode": voice[:5], "name": voice}, "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0, **({"effectsProfileId": ["telephony-class-application"]} if phone else {})}}
     response = await llm.http_client().post(GOOGLE_URL, headers={"X-Goog-Api-Key": key}, json=body)
     response.raise_for_status()

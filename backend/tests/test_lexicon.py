@@ -45,7 +45,7 @@ def test_tts_uses_the_list_before_the_number_rules(monkeypatch):
     import tts
     seen = {}
 
-    async def fake(key, text, language, phone=False):
+    async def fake(key, text, language, phone=False, voice_id=None):
         seen["text"] = text
         return "v", b"a", "audio/mpeg", None
     monkeypatch.setattr(tts, "_google", fake)

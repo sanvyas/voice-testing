@@ -1,81 +1,85 @@
-import { h, mount, toast, ask, ago } from '/lab/ui.js';
-import { notesPanel } from '/lab/components.js';
-import { A, ic, ICONS, durationText, who, rupees, initials, avatarClass } from '../net.js';
+// Calls: one row per person. People who are waiting come first, in orange.
+import { h, mount } from '/lab/ui.js';
+import { A } from '../net.js';
+import { t, isHi, setLang, getLang, dayLabel, waitingFor, clock, initial } from '../i18n.js';
+import { icon, Logo, sheet, isOnline, setOnline } from '../kit.js';
+import { shell, setBadge, saveProfile, go, setupDone } from '../shell.js';
 
-const greeting = () => { const hr = new Date().getHours(); return hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening'; };
-const changed = () => window.dispatchEvent(new Event('munshi-changed'));
+const TABS = [['need', ['आपकी ज़रूरत', 'Needs you']], ['good', ['जानने लायक', 'Good to know']], ['spam', ['काम की नहीं', 'Not worth it']], ['all', ['सब', 'All']]];
+const RANGES = [['any', ['सब दिन', 'All time']], ['today', ['आज', 'Today']], ['7d', ['7 दिन', '7 days']], ['30d', ['30 दिन', '30 days']]];
+const cacheKey = (tab) => `munshi.people.${tab}`;
+const readCache = (tab) => { try { return JSON.parse(localStorage.getItem(cacheKey(tab)) || 'null'); } catch { return null; } };
+const writeCache = (tab, data) => { try { localStorage.setItem(cacheKey(tab), JSON.stringify(data)); } catch { /* storage blocked */ } };
 
-export async function render(root, { params }) {
-  return params[0] ? detail(root, params[0]) : list(root);
-}
+export async function render(root, { query }) {
+  let tab = TABS.some(([k]) => k === query.get('tab')) ? query.get('tab') : 'need';
+  let q = ''; let range = 'any'; let open = false; let data = null; let timer = null; let alive = true;
+  const head = h('div', { class: 'top' }); const tabs = h('div', { class: 'tabs', role: 'tablist' }); const body = h('div', { class: 'scroll' }); const panel = h('div'); const list = h('div'); const sum = h('div', { class: 'sumrow' });
 
-async function list(root) {
-  const [stats, status, profile, all] = await Promise.all([A('/stats'), A('/status'), A('/profile'), A('/calls?limit=100')]);
-  let tab = stats.needs_action ? 'action' : 'all';
-  const rows = h('div', { class: 'stack', style: 'gap:10px' });
-  const pills = h('div', { class: 'pills' });
-  const draw = () => {
-    mount(pills, ...[['action', `Needs you${stats.needs_action ? ` ${stats.needs_action}` : ''}`], ['all', 'All calls'], ['ignore', 'Not worth it']].map(([id, l]) => h('button', { class: 'pill' + (tab === id ? ' on' : ''), onclick: () => { tab = id; draw(); } }, l)));
-    const shown = all.items.filter((c) => (tab === 'all' ? true : tab === 'action' ? c.importance === 'action' && !c.reviewed : c.importance === tab));
-    mount(rows, ...(shown.length ? shown.map(card) : [h('div', { class: 'card empty' }, all.items.length ? (tab === 'action' ? 'Nothing needs you. Nice.' : 'Nothing here.') : 'No calls yet. Make a practice call to see how it works.')]));
-  };
-  const steps = [
-    [status.profile_ready, 'Describe your business', 'Your name, what you sell', '#/setup'],
-    [all.total > 0, 'Make a practice call', 'Play a customer, see the summary', '#/try'],
-  ];
-  const first = steps.findIndex(([done]) => !done);
-  const demo = h('button', { class: 'btn ghost', onclick: async () => { try { await A('/demo', { method: 'POST' }); toast('Sample shop added'); location.hash = '#/try'; location.reload(); } catch (e) { toast(e.message, true); } } }, 'Try with a sample shop');
-  const board = status.board;
-  mount(root,
-    h('div', { class: 'row between', style: 'flex-wrap:nowrap' },
-      h('div', {}, h('div', { class: 'small muted' }, greeting()), h('h1', { class: 'title' }, profile.owner_name || 'Welcome')),
-      h('a', { href: '#/setup', class: 'power' + (profile.assistant_on ? '' : ' off') }, h('i', {}), profile.assistant_on ? 'Assistant on' : 'Assistant off')),
-    first >= 0 ? h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Get started'),
-      h('div', {}, ...steps.map(([done, t, d, href], i) => h('a', { href, class: 'rowlink', style: 'padding:0' }, h('span', { class: 'avatar sm ' + (done ? 'a1' : i === first ? 'a0' : 'a2') }, done ? ic(ICONS.check, [], true) : String(i + 1)), h('div', { class: 'grow' }, h('div', { class: 't' }, t), h('div', { class: 'd' }, d)), i === first ? h('span', { class: 'badge act' }, 'Next') : null))),
-      !status.profile_ready ? demo : null) : null,
-    h('div', { class: 'hero' }, h('div', { class: 'row between', style: 'align-items:flex-end;flex-wrap:nowrap' }, h('div', {}, h('div', { class: 'k' }, 'Needs you'), h('div', { class: 'n' }, String(stats.needs_action))), h('div', { class: 't' }, stats.needs_action === 1 ? 'call is waiting for your reply' : 'calls are waiting for your reply')),
-      h('hr'), h('div', { class: 'stats' }, h('span', {}, h('b', {}, String(stats.answered_7d)), ' answered this week'), h('span', {}, h('b', {}, String(stats.not_worth_time_7d)), ' not worth your time'))),
-    pills, rows,
-    h('a', { href: '#/board', class: 'linkcard' }, h('span', { class: 'ico' }, ic(ICONS.board)), h('div', { class: 'grow' }, h('div', { style: 'font-weight:600' }, "Today's board"), h('div', { class: 'small muted' }, board.items ? `${board.items} item${board.items > 1 ? 's' : ''}${board.sold_out ? ` · ${board.sold_out} sold out` : ''}` : 'Set up prices and stock the assistant may share')), ic(ICONS.next, [], true)));
-  draw();
-}
+  function drawHead() {
+    const state = !setupDone() ? 'setup' : shell.profile.assistant_on ? 'on' : 'off';
+    const label = { on: t(['Munshi चालू', 'Munshi ON']), off: t(['Munshi बंद', 'Munshi OFF']), setup: t(['सेटअप बाकी', 'Finish setup']) }[state];
+    mount(head, h('div', { class: 'brand' }, Logo(34), 'Munshi'), h('div', { style: 'display:flex;align-items:center;gap:8px' },
+      h('button', { class: `chip ${state}`, onclick: () => statusSheet(state) }, h('i'), label),
+      h('button', { class: 'lang', 'aria-label': 'Language', onclick: () => setLang(isHi() ? 'en' : 'hi') }, isHi() ? 'EN' : 'हि')));
+  }
+  function statusSheet(state) {
+    const on = shell.profile.assistant_on;
+    sheet(state === 'setup' ? t(['सेटअप पूरा करें', 'Finish setup']) : on ? t(['Munshi चालू है', 'Munshi is ON']) : t(['Munshi बंद है', 'Munshi is OFF']), (close) => [
+      h('p', {}, state === 'setup' ? t(['फ़ोन में कोड डायल करना बाकी है। तब तक Munshi कॉल नहीं उठाएगा।', 'You still need to dial the code on your phone. Until then Munshi will not pick up.'])
+        : on ? t(['फ़ोन पहले आपका बजेगा। लगभग 20 सेकंड में न उठाएँ तो Munshi उठाएगा। बंद करने पर सारी कॉल सिर्फ़ आपके फ़ोन पर आएँगी।', 'Your phone rings first. If you do not pick up in about 20 seconds, Munshi does. If you switch it off, all calls ring only your phone.'])
+          : t(['अभी सारी कॉल सिर्फ़ आपके फ़ोन पर आ रही हैं। Munshi कोई कॉल नहीं उठा रहा।', 'All calls ring only your phone now. Munshi is not answering any call.'])),
+      h('button', { class: state === 'setup' || !on ? 'primary' : 'outline', style: 'width:100%', onclick: async () => {
+        close();
+        if (state === 'setup') return go('#/setup');
+        try { await saveProfile({ assistant_on: !on }); drawHead(); window.dispatchEvent(new Event('munshi-toast')); } catch (e) { alert(e.message); }
+      } }, state === 'setup' ? t(['सेटअप खोलें', 'Open setup']) : on ? t(['Munshi बंद करें', 'Switch Munshi off']) : t(['Munshi चालू करें', 'Switch Munshi on']))]);
+  }
+  function drawTabs() {
+    mount(tabs, ...TABS.map(([k, l]) => h('button', { class: `tab ${k}${tab === k ? ' on' : ''}`, role: 'tab', 'aria-selected': tab === k, onclick: () => { tab = k; history.replaceState(null, '', `#/calls?tab=${k}`); drawTabs(); fetchList(); } },
+      t(l), k === 'need' && data && data.pending_calls ? h('b', {}, String(data.pending_calls)) : null)));
+  }
+  const filterActive = () => range !== 'any' || !!q.trim();
+  function drawPanel() {
+    const input = h('input', { value: q, placeholder: t(['नाम या बात खोजें', 'Search name or topic']), 'aria-label': t(['खोजें', 'Search']), oninput: (e) => { q = e.target.value; clearTimeout(timer); timer = setTimeout(fetchList, 250); } });
+    mount(panel, open ? h('div', { class: 'filters' }, input, h('div', { class: 'ranges' }, ...RANGES.map(([k, l]) => h('button', { class: 'range' + (range === k ? ' on' : ''), onclick: () => { range = k; drawPanel(); fetchList(); } }, t(l))))) : null);
+  }
+  function drawList() {
+    const rows = data ? data.rows : [];
+    const sumText = !data ? '' : tab === 'need' ? (data.pending_calls ? t([`आज के ${data.pending_today} · पुराने ${data.pending_older}`, `${data.pending_today} today · ${data.pending_older} older`]) : '')
+      : filterActive() ? '' : t([`${rows.length} लोग`, `${rows.length} people`]);
+    mount(sum, h('span', {}, sumText), h('button', { class: 'iconbtn' + (open || filterActive() ? ' on' : ''), 'aria-label': t(['खोजें', 'Search']), onclick: () => { open = !open; drawPanel(); drawList(); } }, icon('search')));
+    const empty = rows.length === 0;
+    const none = tab === 'need' && !filterActive() ? [t(['कुछ बाकी नहीं', 'Nothing pending']), t(['सारे कॉल-बैक हो चुके हैं। पुरानी कॉल “सब” में देखें।', 'All call-backs are done. See older calls under All.'])]
+      : data && data.people === 0 && !filterActive() ? [t(['अभी कोई कॉल नहीं', 'No calls yet']), t(['जब आप कॉल नहीं उठाएँगे, Munshi यहाँ लिख देगा।', 'When you miss a call, Munshi will write it here.'])]
+        : [t(['कोई कॉल नहीं मिली', 'No calls found']), t(['खोज या तारीख बदलकर देखें।', 'Try changing the search or dates.'])];
+    mount(list, empty ? h('div', { class: 'empty' }, h('div', { class: 'ring' }, icon('check', 32)), h('b', {}, none[0]), h('p', {}, none[1]))
+      : h('div', { class: 'list' }, ...rows.map((r) => {
+        const wait = r.pending > 0;
+        return h('button', { class: 'person' + (wait ? ' wait' : ''), onclick: () => go(`#/thread/${encodeURIComponent(r.key)}`) },
+          h('div', { class: 'av' + (wait ? ' wait' : r.kind === 'good' ? ' good' : '') }, initial(r.name)),
+          h('div', { class: 'pmain' }, h('div', { class: 'prow' }, h('div', { class: 'pname' }, r.name, r.calls > 1 ? h('span', { class: 'ncalls' }, t([`${r.calls} कॉल`, `${r.calls} calls`])) : null),
+            h('span', { class: 'ptime' }, r.days_ago > 0 ? dayLabel(r.days_ago) : clock(r.at))),
+          h('div', { class: 'pask' }, r.summary), r.oldest_pending_days > 0 ? h('div', { class: 'page' }, waitingFor(r.oldest_pending_days)) : null),
+          wait ? h('span', { class: 'badge' }, String(r.pending)) : null);
+      })));
+  }
+  const foot = h('div', { class: 'foot' });
+  function drawFoot() { const d = data && data.today; mount(foot, d && d.handled ? t([`आज Munshi ने ${d.handled} कॉल संभालीं, ${d.orders} ऑर्डर नोट किए`, `Today Munshi handled ${d.handled} calls and noted ${d.orders} orders`]) : ''); }
 
-function card(c) {
-  const name = who(c);
-  const acting = c.importance === 'action' && !c.reviewed;
-  return h('a', { href: `#/calls/${c.id}`, class: 'callcard' }, h('span', { class: `avatar ${avatarClass(name)}` }, initials(c.caller_name) === '?' ? '?' : initials(c.caller_name)),
-    h('div', { class: 'grow' }, h('div', { class: 'top' }, h('span', { class: 'nm' }, name), h('span', { class: 'tm' }, ago(c.started_at))), h('div', { class: 'sm' }, c.summary || '…'),
-      h('div', { class: 'tags' }, acting && c.open_actions ? h('span', { class: 'badge act' }, `${c.open_actions} to do`) : null, c.category ? h('span', { class: 'badge' }, c.category) : null, c.importance === 'action' && c.reviewed ? h('span', { class: 'badge ok' }, 'Done') : null,
-        c.source === 'test' ? h('span', { class: 'badge' }, 'practice') : null, c.note_count ? h('span', { class: 'badge' }, `${c.note_count} note${c.note_count > 1 ? 's' : ''}`) : null)));
-}
-
-async function detail(root, id) {
-  const [c, status] = await Promise.all([A(`/calls/${id}`), A('/status')]);
-  const admin = status.role === 'admin';  // what a call cost is for the platform, not for the business
-  const name = who(c);
-  const items = c.action_items;
-  const todo = h('div', {});
-  const drawTodo = () => mount(todo, ...items.map((a) => h('label', { class: 'todo' + (a.done ? ' done' : '') },
-    h('input', { type: 'checkbox', class: 'ck', checked: a.done, onchange: async (e) => { try { const r = await A(`/calls/${id}/actions/${a.id}`, { method: 'PUT', body: { done: e.target.checked } }); a.done = e.target.checked; drawTodo(); changed(); if (r.reviewed) toast('All done. Moved off your list.'); } catch (err) { toast(err.message, true); e.target.checked = a.done; } } }), h('span', {}, a.text))));
-  drawTodo();
-  const dealt = h('input', { type: 'checkbox', class: 'sw', role: 'switch', checked: c.reviewed, 'aria-label': 'I have dealt with this', onchange: async (e) => { try { await A(`/calls/${id}`, { method: 'PUT', body: { reviewed: e.target.checked } }); changed(); toast(e.target.checked ? 'Marked as dealt with' : 'Back on your list'); } catch (err) { toast(err.message, true); } } });
-  const label = c.importance === 'action' ? ['Needs you', 'act'] : c.importance === 'ignore' ? ['Not worth your time', ''] : ['Good to know', 'ok'];
-  const wa = c.whatsapp;
-  mount(root,
-    h('a', { href: '#/calls', class: 'back' }, ic(ICONS.back), 'Calls'),
-    h('div', { class: 'row', style: 'gap:14px;flex-wrap:nowrap' }, h('span', { class: `avatar lg ${avatarClass(name)}` }, initials(c.caller_name)),
-      h('div', {}, h('h1', { class: 'title', style: 'font-size:26px' }, name), h('div', { class: 'small muted', style: 'margin-top:2px' }, [c.source === 'test' ? 'Practice call' : 'Phone call', ago(c.started_at), durationText(c.duration_s), c.language].filter(Boolean).join(' · ')))),
-    h('div', { class: 'card stack' },
-      h('div', { class: 'row', style: 'gap:6px' }, h('span', { class: 'badge ' + label[1] }, label[0]), c.category ? h('span', { class: 'badge' }, c.category) : null),
-      h('div', { style: 'font-size:17px;font-weight:600;line-height:1.4' }, c.summary || 'No summary.'),
-      c.summary_error ? h('div', { class: 'notice' }, c.summary_error) : null,
-      wa ? h('div', { class: 'wa', style: wa.sent ? '' : 'background:var(--warn-soft);color:var(--warn-ink)' }, ic(ICONS.chat, [], true), h('div', {}, wa.sent ? [h('b', {}, 'Instant reply sent on WhatsApp: '), 'the caller got your address, hours and board before you saw this.'] : [h('b', {}, 'WhatsApp reply not sent: '), wa.error || 'not connected'])) : null,
-      c.callback_number && c.handled_by === 'assistant' ? h('a', { class: 'btn lg', href: `tel:${c.callback_number}` }, ic(ICONS.phone), `Call back ${c.callback_number}`) : null,
-      c.importance !== 'ignore' ? h('label', { class: 'row between', style: 'min-height:44px;font-weight:600;font-size:15px' }, 'I have dealt with this', dealt) : null),
-    items.length ? h('div', { class: 'card' }, h('h2', { class: 'sec', style: 'margin-bottom:6px' }, 'To do'), todo) : null,
-    c.turns.length ? h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'What was said'), h('div', { class: 'chat' }, ...c.turns.map((t) => h('div', { class: 'bubble ' + (t.role === 'assistant' ? 'assistant' : 'caller') }, t.content)))) : null,
-    h('div', { class: 'card stack' }, h('h2', { class: 'sec' }, 'Your notes'), h('div', { class: 'small muted' }, 'Write down what you noticed: was it right, what should change.'),
-      notesPanel(id, c.notes, { urls: { add: `/api/assistant/calls/${id}/notes`, item: (nid) => `/api/assistant/call-notes/${nid}` } })),
-    admin && c.cost && c.cost.total !== undefined ? h('div', { class: 'small muted', style: 'text-align:center;line-height:1.5' }, `Estimated cost of this call: ${rupees(c.cost.total)} (phone ${rupees(c.cost.phone)}, voice ${rupees(c.cost.voice)}, AI ${rupees(c.cost.ai + c.cost.speech_to_text)}${c.cost.whatsapp ? `, WhatsApp ${rupees(c.cost.whatsapp)}` : ''})`) : null,
-    h('div', { style: 'text-align:center' }, h('button', { class: 'link danger', onclick: async () => { if (await ask('Delete this call and its notes?', { yes: 'Delete', danger: true })) { await A(`/calls/${id}`, { method: 'DELETE' }); changed(); location.hash = '#/calls'; } } }, 'Delete this call')));
+  async function fetchList() {
+    try {
+      data = await A(`/people?tab=${tab}&q=${encodeURIComponent(q.trim())}&range=${range}`);
+      setOnline(true); if (!q.trim() && range === 'any') writeCache(tab, data);
+    } catch (e) {
+      if (e.status !== 0) throw e;
+      setOnline(false); data = readCache(tab) || { rows: [], people: 0, pending_calls: shell.badge, pending_today: 0, pending_older: 0, today: { handled: 0, orders: 0 } };
+    }
+    if (!alive) return;
+    setBadge(data.pending_calls); drawTabs(); drawList(); drawFoot();
+  }
+  mount(root, head, tabs, h('div', { class: 'scroll', style: 'padding-top:0' }, sum, panel, list, foot));
+  drawHead(); drawTabs(); drawPanel(); drawList();
+  await fetchList();
+  return () => { alive = false; clearTimeout(timer); };
 }

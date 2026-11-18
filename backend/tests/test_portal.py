@@ -75,7 +75,7 @@ def test_the_freshness_window_can_be_changed_or_switched_off(client):
     assert client.put(f"{API}/knowledge", json={"stale_days": 99}).status_code == 422
 
 
-def test_the_whatsapp_reply_leaves_out_prices_that_are_out_of_date(client):
+def test_the_whatsapp_reply_never_carries_a_price(client):
     profile(client, mode="board")
     add_item(client, "Basmati rice, 5 kg", "450")
     add_item(client, "Toor dal, 1 kg", "160")
@@ -85,7 +85,7 @@ def test_the_whatsapp_reply_leaves_out_prices_that_are_out_of_date(client):
     from assistant import tenant
     with db.session_scope() as session, tenant.acting_as(tenant.first_business_id(session)):
         text = whatsapp.preview(service.get_profile(session), board_mod.shareable(session))
-    assert "Basmati rice, 5 kg Rs 450" in text and "Toor" not in text
+    assert "Rs 450" not in text and "Toor" not in text and "Basmati" not in text
 
 
 # --- typing or saying a price change ------------------------------------------------------

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 
 import llm
 from lab import settings_store
-from lab.models import Call, CallNote, CallTurn, Contact, utcnow
+from lab.models import Call, CallNote, CallTurn, Contact, WaMessage, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, get_or_404, iso
 
@@ -25,7 +25,8 @@ logger = logging.getLogger("ai_therapy.assistant")
 SECRET_BOX = None  # set at startup (lab/app.py) so background work can read saved keys
 MAX_TURNS = 60  # caller + assistant messages in one call; a cost and runaway guard
 INR_PER_USD = 95.0
-DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True}
+DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True,
+                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}}
 
 
 # --- phone numbers ------------------------------------------------------------------
@@ -67,6 +68,12 @@ class ProfileIn(BaseModel):
     address: str = Field(default="", max_length=200)
     mode: str = Field(default="message", pattern="^(reply|message|board)$")  # reply: WhatsApp only | message: take a message | board: answer from Today's board
     whatsapp_on: bool = True
+    voice: str = Field(default="v1", pattern="^v[1-4]$")
+    open: str = Field(default="", max_length=8)
+    close: str = Field(default="", max_length=8)
+    delivery: str = Field(default="", max_length=300)
+    forwarding_done: bool = False
+    confirmed: dict = Field(default_factory=dict)  # when the owner last said a shop fact (address, hours, delivery, rules) is still right
 
     model_config = {"extra": "forbid", "str_strip_whitespace": True}
 
@@ -83,10 +90,23 @@ def get_profile(session: Session) -> dict:
     return {**DEFAULT_PROFILE, **(tenant.get(session, "profile", {}) or {})}
 
 
+FACT_FIELDS = ("address", "hours", "delivery", "rules")
+
+
 def save_profile(session: Session, body: ProfileIn) -> dict:
+    old = get_profile(session)
     data = body.model_dump()
     data["owner_phone"] = normalize_phone(data["owner_phone"]) if data["owner_phone"] else ""
+    if data["open"] and data["close"]:
+        data["hours"] = f"{data['open']} to {data['close']}"
+    now = iso(utcnow())
+    data["confirmed"] = {**(old.get("confirmed") or {}), **{k: v for k, v in (data.get("confirmed") or {}).items() if k in FACT_FIELDS}}
+    for f in FACT_FIELDS:  # saving a changed fact counts as confirming it
+        if data.get(f, "") != old.get(f, "") or f not in data["confirmed"]:
+            data["confirmed"][f] = now
     tenant.put(session, "profile", data)
+    from . import voices
+    voices.forget()
     tenant.business(session).name = (data["business_name"] or tenant.business(session).name)[:120]
     return data
 
@@ -143,6 +163,7 @@ def call_summary(c: Call, turns: int | None = None, notes: int | None = None) ->
 def call_detail(c: Call) -> dict:
     return {**call_summary(c, len(c.turns), len(c.notes)), "action_items": c.action_items, "callback_number": c.callback_number, "language": c.language,
             "summary_error": c.summary_error, "cost": c.cost, "provider_call_id": c.provider_call_id, "whatsapp": (c.meta or {}).get("whatsapp"),
+            "ask": (c.meta or {}).get("ask", ""), "order": (c.meta or {}).get("order") or {}, "keep": (c.meta or {}).get("keep") or [], "replies": (c.meta or {}).get("replies") or [],
             "turns": [{"idx": t.idx, "role": t.role, "content": t.content, "created_at": iso(t.created_at)} for t in c.turns],
             "notes": [{"id": n.id, "body": n.body, "after_turn": n.after_turn, "created_at": iso(n.created_at), "updated_at": iso(n.updated_at)} for n in c.notes]}
 
@@ -310,6 +331,44 @@ class Summary(BaseModel):
     callback_number: str = ""
     language: str = ""
     unanswered: list[str] = Field(default_factory=list)
+    ask: str = ""
+    order: dict = Field(default_factory=dict)
+    keep: list[str] = Field(default_factory=list)
+    replies: list[dict] = Field(default_factory=list)
+
+    @field_validator("ask", mode="before")
+    @classmethod
+    def _ask(cls, v) -> str:
+        v = v[0] if isinstance(v, list) and v else v
+        return re.sub(r"\s+", " ", v if isinstance(v, str) else "").strip()[:60]
+
+    @field_validator("keep", mode="before")
+    @classmethod
+    def _keep(cls, v):
+        return [re.sub(r"\s+", " ", str(x)).strip()[:160] for x in (v or []) if str(x).strip()][:3] if isinstance(v, list) else []
+
+    @field_validator("replies", mode="before")
+    @classmethod
+    def _replies(cls, v):
+        out = []
+        for r in (v if isinstance(v, list) else []):
+            if isinstance(r, dict) and str(r.get("text", "")).strip():
+                out.append({"label": re.sub(r"\s+", " ", str(r.get("label", ""))).strip()[:30] or "Reply", "text": re.sub(r"\s+", " ", str(r["text"])).strip()[:400]})
+        return out[:2]
+
+    @field_validator("order", mode="before")
+    @classmethod
+    def _order(cls, v):
+        if not isinstance(v, dict):
+            return {}
+        items = []
+        for it in (v.get("items") or [])[:12]:
+            if isinstance(it, dict) and str(it.get("name", "")).strip():
+                qn = it.get("qty_n")
+                items.append({"name": str(it["name"]).strip()[:80], "qty_n": qn if isinstance(qn, (int, float)) and not isinstance(qn, bool) else None,
+                              "unit": str(it.get("unit", "")).strip()[:20], "board_name": str(it.get("board_name", "")).strip()[:80]})
+        mode = v.get("mode") if v.get("mode") in ("delivery", "pickup") else ""
+        return {"items": items, "mode": mode, "when": str(v.get("when", "")).strip()[:60], "address": str(v.get("address", "")).strip()[:200]}
 
     @field_validator("summary")
     @classmethod
@@ -377,6 +436,8 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         sendable = call.source == "phone" and bool(call.caller_number) and creds["access_token"] and creds["phone_number_id"] and not (call.meta or {}).get("whatsapp")
         profile = get_profile(session)
         system = prompts.summary_system(profile, config.resolve(session, "summary"), utcnow().strftime("%d %B %Y"))
+        names = [i["name"] for i in board.board_out(session)["items"]][:60]
+        system += "\n\nBOARD ITEMS: " + (", ".join(names) if names else "(none)")
         reply = (creds, call.caller_number, profile, board.shareable(session)) if sendable else (None, None, None, None)
         return _history(call), sum(1 for t in call.turns if t.role == "caller"), reply, system
 
@@ -417,6 +478,9 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
             call.meta = {**(call.meta or {}), "whatsapp": wa_result}
         if summary.unanswered:
             call.meta = {**(call.meta or {}), "unanswered": summary.unanswered}
+        call.meta = {**(call.meta or {}), "ask": summary.ask, "order": summary.order, "keep": summary.keep, "replies": summary.replies}
+        if wa_result and wa_result.get("sent") and call.caller_number:
+            session.add(WaMessage(business_id=tenant.current(), phone=call.caller_number, call_id=call.id, sender="ai", text=wa_result.get("text", ""), provider_id=wa_result.get("id", "")))
         call.cost = estimate_cost(call)
         session.flush()
         return call_detail(call)

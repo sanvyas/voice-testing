@@ -17,7 +17,7 @@ from lab.runner import run_db
 from lab.schemas import Strict
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, costs, integrations, lexicon, prompts, service, tenant, vision, whatsapp
+from . import board, config, costs, integrations, lexicon, people, prompts, service, tenant, vision, voices, whatsapp
 from .access import admin_only, scope
 
 router = APIRouter(dependencies=[Depends(scope)])
@@ -54,6 +54,109 @@ def _mine(session: Session, model, id_: str, label: str):
 
 
 # --- today ---------------------------------------------------------------------------
+
+# --- the owner app: people, threads, shop info, plan, voice ----------------------------
+
+@router.get("/people")
+def get_people(tab: str = Query("need", pattern="^(need|good|spam|all)$"), q: str = Query("", max_length=60), range: str = Query("any", pattern="^(any|today|7d|30d)$"), session: Session = Depends(get_session)):
+    return people.people(session, tab, q, range)
+
+
+@router.get("/thread")
+def get_thread(phone: str = Query(min_length=1, max_length=40), session: Session = Depends(get_session)):
+    return people.thread(session, phone)
+
+
+class MessageIn(Strict):
+    phone: str = Field(min_length=3, max_length=20)
+    text: str = Field(min_length=1, max_length=1000)
+
+
+@router.post("/messages")
+async def send_message(body: MessageIn):
+    return await people.send_message(body.phone, body.text)
+
+
+@router.get("/people/known")
+def get_known(session: Session = Depends(get_session)):
+    return people.known(session)
+
+
+@router.get("/shop")
+def get_shop(session: Session = Depends(get_session)):
+    return people.shop(session)
+
+
+class ConfirmIn(Strict):
+    id: str = Field(min_length=1, max_length=60)
+
+
+@router.post("/shop/confirm")
+def confirm_shop_item(body: ConfirmIn, session: Session = Depends(get_session)):
+    return people.confirm(session, body.id)
+
+
+class UnderstandIn(Strict):
+    text: str = Field(min_length=1, max_length=600)
+
+
+@router.post("/shop/understand")
+async def shop_understand(body: UnderstandIn):
+    return await people.understand(body.text)
+
+
+class ShopApplyIn(Strict):
+    rates: list[dict] = Field(default_factory=list, max_length=40)
+    facts: list[dict] = Field(default_factory=list, max_length=10)
+
+
+@router.post("/shop/apply")
+def shop_apply(body: ShopApplyIn, session: Session = Depends(get_session)):
+    return people.apply(session, body.rates, body.facts)
+
+
+class PlanIn(Strict):
+    upi: str | None = Field(default=None, max_length=80)
+    cancelled: bool | None = None
+
+
+@router.get("/plan")
+def get_plan(session: Session = Depends(get_session)):
+    return people.plan(session)
+
+
+@router.put("/plan")
+def put_plan(body: PlanIn, session: Session = Depends(get_session)):
+    return people.plan_update(session, upi=body.upi, cancelled=body.cancelled)
+
+
+@router.get("/voices")
+def get_voices(session: Session = Depends(get_session)):
+    return {"voices": voices.VOICES, "current": voices.get(service.get_profile(session).get("voice"))["id"]}
+
+
+class VoiceSampleIn(Strict):
+    voice: str | None = Field(default=None, pattern="^v[1-4]$")  # default: the voice this business chose
+    language: str = Field(default="hi-IN", pattern="^(hi-IN|en-IN)$")
+    text: str | None = Field(default=None, max_length=600)  # default: a short hello
+
+
+SAMPLES = {"hi-IN": "नमस्ते, मैं मुंशी हूँ, एक ए आई सहायक। बताइए, क्या चाहिए?", "en-IN": "Namaste, this is Munshi, an AI assistant. How can I help?"}
+
+
+@router.post("/voices/sample")
+async def voice_sample(body: VoiceSampleIn, session: Session = Depends(get_session)):
+    """A short clip in a voice (a sample, or the practice call's replies). If no server voice is set up the app uses the phone's own voice."""
+    engine = tts.active()
+    if engine != "google" or not tts.key_for(engine)[0]:
+        raise ServiceError("No server voice is set up yet, so this is played by your phone.", 409)
+    text = (body.text or SAMPLES[body.language]).strip()
+    voice_id = body.voice or voices.get(service.get_profile(session).get("voice"))["id"]
+    await run_db(lambda s: settings_store.tts_check_cap(s, engine, len(text)))
+    speech = await tts.synthesize(engine, text, body.language, voice_id=voice_id, lexicon=await lexicon.current())
+    await run_db(lambda s: settings_store.tts_record(s, engine, speech.chars, speech.cost_usd))
+    return Response(content=speech.audio, media_type=speech.mime)
+
 
 @router.get("/stats")
 def get_stats(session: Session = Depends(get_session)):

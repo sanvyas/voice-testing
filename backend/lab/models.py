@@ -377,6 +377,20 @@ class BoardItem(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # when the owner last said "this is still true"
 
 
+class WaMessage(Base):
+    """A WhatsApp message in the thread with one person: sent by Munshi (AI) or by the owner. Only messages that really went out are kept."""
+    __tablename__ = "wa_messages"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # the other person, E.164
+    call_id: Mapped[str | None] = mapped_column(ForeignKey("calls.id", ondelete="SET NULL"), nullable=True)
+    sender: Mapped[str] = mapped_column(String(10), nullable=False)  # ai | owner | customer
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(120), default="", nullable=False)  # Meta message id
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
 class AuditEntry(Base):
     """What changed in the portal or app configuration, and when. A plain trail, not security logging."""
     __tablename__ = "audit_entries"
