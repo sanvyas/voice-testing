@@ -9,7 +9,7 @@ import { shell, saveProfile, go } from '../shell.js';
 const SAMPLE = { 'hi-IN': 'नमस्ते, मैं मुंशी हूँ, एक ए आई सहायक। बताइए, क्या चाहिए?', 'en-IN': 'Namaste, this is Munshi, an AI assistant. How can I help?' };
 
 export async function render(root, { query }) {
-  const data = await A('/voices'); let pick = data.current; const from = query.get('from') === 'setup' ? '#/setup' : '#/more'; const list = h('div', { class: 'scroll', style: 'padding-top:8px;display:flex;flex-direction:column;gap:10px' });
+  const data = await A('/voices'); let pick = data.current; const from = query.get('from') === 'setup' ? '#/setup' : query.get('from') === 'start' ? '#/start/4' : '#/more'; const list = h('div', { class: 'scroll', style: 'padding-top:8px;display:flex;flex-direction:column;gap:10px' });
   let audio = null;
   async function listen(v, e) {
     e.stopPropagation(); pick = v.id; draw(); const language = getLang() === 'hi' ? 'hi-IN' : 'en-IN';

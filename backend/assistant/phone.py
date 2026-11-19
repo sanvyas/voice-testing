@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import secrets
 import time
 from collections import OrderedDict
@@ -221,6 +222,21 @@ async def _download(url: str) -> bytes:
     return response.content
 
 
+_FORGETTING: set = set()  # keeps background deletions alive until they finish
+
+
+async def _forget_recording(recording_id: str) -> None:
+    """The audio was only needed to turn it into text, so ask Plivo to delete its copy. Best effort: a failure never touches the call."""
+    if not re.fullmatch(r"[0-9A-Za-z-]{8,64}", recording_id or ""):
+        return
+    try:
+        creds = await run_db(lambda s: settings_store.get_phone(s, service.SECRET_BOX))
+        if creds["auth_id"] and creds["auth_token"]:
+            await llm.http_client().delete(f"https://api.plivo.com/v1/Account/{creds['auth_id']}/Recording/{recording_id}/", auth=(creds["auth_id"], creds["auth_token"]), timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("could not delete the provider's copy of a recording: %s", exc)
+
+
 @router.post("/telephony/plivo/turn")
 async def turn(request: Request, call: str = ""):
     form = await verified_form(request)
@@ -266,6 +282,9 @@ async def _turn(request: Request, call: str, form: dict):
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not transcribe the recording: %s", exc)
         return await silence()
+    task = asyncio.create_task(_forget_recording(form.get("RecordingID", "")))
+    _FORGETTING.add(task)
+    task.add_done_callback(_FORGETTING.discard)
     text = heard.text if heard else ""
     if not text:
         return await silence()

@@ -1,5 +1,5 @@
 import { h, mount } from '/lab/ui.js';
-import { setBusinessKey } from '/lab/api.js';
+import { setBusinessKey, getBusinessKey, setUnauthorizedHandler } from '/lab/api.js';
 import { t, setLang, getLang } from './i18n.js';
 import { icon, isOnline, setOnline } from './kit.js';
 import { shell, load, refreshBadge, saveProfile } from './shell.js';
@@ -8,13 +8,16 @@ import { shell, load, refreshBadge, saveProfile } from './shell.js';
 const linkKey = new URLSearchParams(location.search).get('k');
 if (linkKey) { setBusinessKey(linkKey); history.replaceState(null, '', location.pathname + location.hash); }
 
+// No sign-in yet (or it has ended): ask for the phone number instead of an admin token.
+setUnauthorizedHandler(() => import('./views/login.js').then((m) => m.showLogin()));
+
 const ROUTES = {
   calls: () => import('./views/calls.js'), thread: () => import('./views/thread.js'), detail: () => import('./views/detail.js'), know: () => import('./views/know.js'),
   contacts: () => import('./views/contacts.js'), more: () => import('./views/more.js'), setup: () => import('./views/setup.js'), plan: () => import('./views/plan.js'),
-  voice: () => import('./views/voice.js'), try: () => import('./views/try.js'),
+  voice: () => import('./views/voice.js'), try: () => import('./views/try.js'), start: () => import('./views/start.js'),
 };
 const NAV = [['calls', ['कॉल', 'Calls'], 'phone'], ['know', ['जानकारी', 'Shop info'], 'book'], ['contacts', ['संपर्क', 'Contacts'], 'people'], ['more', ['सेटिंग', 'Settings'], 'more']];
-const FULL = new Set(['thread', 'detail', 'setup', 'plan', 'voice', 'try']);
+const FULL = new Set(['thread', 'detail', 'setup', 'plan', 'voice', 'try', 'start']);
 const banner = document.getElementById('banner'); const view = document.getElementById('view'); const nav = document.getElementById('nav');
 let cleanup = null; let token = 0;
 
@@ -61,7 +64,11 @@ window.addEventListener('munshi-badge', () => drawNav(parse().name));
 window.addEventListener('munshi-changed', refreshBadge);
 
 (async () => {
+  // …/assistant/?signin=1 shows the phone sign-in even where the server still lets anyone in, so it can be tried before sign-in is made compulsory.
+  if (new URLSearchParams(location.search).has('signin') && !getBusinessKey()) { history.replaceState(null, '', location.pathname + location.hash); await import('./views/login.js').then((m) => m.showLogin()); }
   try { await load(); } catch (e) { if (e.status === 0) setOnline(false); }
+  const p = shell.profile;  // a new owner goes through the first-run steps; an existing shop that is already set up does not
+  if (p && !p.onboarded && !(p.business_name && p.owner_name && p.business_name !== 'New business') && !location.hash.startsWith('#/start')) location.hash = '#/start';
   route();
   refreshBadge();
 })();

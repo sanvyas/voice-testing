@@ -99,8 +99,8 @@ ENDING THE CALL
 Never end the call in a message that asks the caller a question. When you have what {{owner_name}} needs, confirm it in one sentence (for example: "I'll tell {{owner_name}} you need 20 packets and they will call you back"), thank the caller, and end that last message with <<END>>. Never write <<END>> before that point."""
 
 DEFAULT_GREETINGS = {
-    "greeting_hi": "नमस्ते, मैं Munshi हूँ, {{business_name}} का AI सहायक। {{owner_name}} जी अभी फ़ोन नहीं उठा सकते। बताइए?",
-    "greeting_en": "Namaste, this is Munshi, the AI assistant of {{business_name}}. {{owner_name}} cannot take the call right now. How can I help?",
+    "greeting_hi": "नमस्ते, मैं Munshi हूँ, {{business_name}} का AI सहायक। {{owner_name}} जी अभी फ़ोन नहीं उठा सकते। यह बातचीत नोट की जाती है। बताइए?",
+    "greeting_en": "Namaste, this is Munshi, the AI assistant of {{business_name}}. {{owner_name}} cannot take the call right now. This conversation is noted. How can I help?",
 }
 
 DEFAULT_SUMMARY = f"""You write call notes for {{{{owner_name}}}}, who runs {{{{business_name}}}} in India. They read these on a phone between customers, so be SHORT. You are given the transcript of a call that their AI assistant answered. Reply with ONE JSON object and nothing else, in English, with exactly these keys:

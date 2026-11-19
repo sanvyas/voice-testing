@@ -87,6 +87,26 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/health/deep")
+async def health_deep():
+    """For an uptime monitor: 503 when the database is down, 200 with status "degraded" when the app runs but needs attention."""
+    from sqlalchemy import select, text
+
+    import llm
+    from assistant import legal
+    from lab import db
+    from lab.models import Alert
+
+    try:
+        with db.session_scope() as s:
+            s.execute(text("SELECT 1"))
+            errors = [a.key for a in s.scalars(select(Alert).where(Alert.resolved_at.is_(None), Alert.level == "error"))]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+    ai = bool(llm.configured_providers())
+    return {"status": "ok" if ai and not errors else "degraded", "checks": {"database": True, "ai_provider": ai, "open_errors": len(errors), "legal_pages_complete": not legal.missing()}}
+
+
 @app.get("/ready")
 async def ready():
     """Readiness probe: the database must answer."""

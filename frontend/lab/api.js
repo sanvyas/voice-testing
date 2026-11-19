@@ -38,9 +38,18 @@ function formatDetail(detail) {
   return typeof detail === 'string' ? detail : 'Request failed';
 }
 
+// The owner app signs people in with a phone number instead of asking for the admin token: it registers its own handler here.
+let unauthorizedHandler = null;
+export const setUnauthorizedHandler = (fn) => { unauthorizedHandler = fn; };
+
 let loginPromise = null;
 function askForToken() {
   if (loginPromise) return loginPromise;
+  if (unauthorizedHandler && !inPortal()) {
+    setBusinessKey('');  // whatever sign-in was stored no longer works
+    loginPromise = Promise.resolve(unauthorizedHandler()).finally(() => { loginPromise = null; });
+    return loginPromise;
+  }
   if (getBusinessKey() && !inPortal()) {  // an owner whose link was replaced or removed: a token would not help
     loginPromise = new Promise((resolve) => {
       setBusinessKey('');
@@ -86,6 +95,17 @@ let configCache = null;
 export async function getConfig(force = false) {
   if (!configCache || force) configCache = await api('/config');
   return configCache;
+}
+
+/** GET a file with the same sign-in as every other call, and save it. */
+export async function apiDownload(path, filename) {
+  let res;
+  try { res = await fetch(url(path), { headers: authHeaders() }); }
+  catch { throw new ApiError('Cannot reach the server. Check your connection.', 0); }
+  if (res.status === 401) { await askForToken(); return apiDownload(path, filename); }
+  if (!res.ok) throw new ApiError(res.statusText || 'Download failed', res.status);
+  const link = h('a', { href: URL.createObjectURL(await res.blob()), download: filename });
+  document.body.append(link); link.click(); link.remove();
 }
 
 export async function apiForm(path, form) {

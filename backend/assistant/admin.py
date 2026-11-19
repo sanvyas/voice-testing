@@ -16,7 +16,7 @@ from lab.service import ServiceError, iso
 
 from lab import settings_store
 
-from . import board, config, costs, service, tenant, whatsapp
+from . import alerts, board, config, costs, legal, service, sms, tenant, whatsapp
 from .access import admin_only, scope
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(scope), Depends(admin_only)])
@@ -143,7 +143,7 @@ def list_businesses(q: str = Query("", max_length=60), days: int = Query(30, ge=
 @router.post("/businesses", status_code=201)
 def create_business(body: BusinessIn, request: Request, session: Session = Depends(get_session)):
     owner_phone = service.normalize_phone(body.owner_phone) if body.owner_phone else ""
-    b = Business(name=body.name.strip(), phone_number=_number(session, body.phone_number), settings={"profile": {**service.DEFAULT_PROFILE, "business_name": body.name.strip(), "owner_name": body.owner_name.strip(), "owner_phone": owner_phone}})
+    b = Business(name=body.name.strip(), phone_number=_number(session, body.phone_number), owner_phone=owner_phone, settings={"profile": {**service.DEFAULT_PROFILE, "business_name": body.name.strip(), "owner_name": body.owner_name.strip(), "owner_phone": owner_phone}})
     session.add(b)
     session.flush()
     key = _issue_key(session, request, b)
@@ -301,3 +301,61 @@ def platform_info(request: Request, session: Session = Depends(get_session)):
     return {"phone": settings_store.phone_status(session, box), "whatsapp": {**settings_store.whatsapp_status(session, box), "template_body": whatsapp.TEMPLATE_BODY},
             "webhooks": {"answer": f"{base}/telephony/plivo/answer", "hangup": f"{base}/telephony/plivo/hangup", "https": base.startswith("https://")},
             "signed_in_required": bool(cfg.api_tokens) and not cfg.open_access}
+
+
+# --- running the platform: alerts, launch checklist, backup ---------------------------------
+
+@router.get("/alerts")
+def list_alerts(session: Session = Depends(get_session)):
+    return alerts.listing(session)
+
+
+@router.post("/alerts/{alert_id}/resolve", status_code=204)
+def resolve_alert(alert_id: str, session: Session = Depends(get_session)):
+    if not alerts.resolve(session, alert_id):
+        raise ServiceError("Alert not found.", 404)
+    return Response(status_code=204)
+
+
+@router.get("/readiness")
+def readiness(request: Request, session: Session = Depends(get_session)):
+    """What is still needed before real customers use the product. Each check says what it found and how to fix it."""
+    import llm
+
+    cfg = request.app.state.lab_settings
+    phone = settings_store.phone_status(session, _box(request))
+    base = _base(request)
+    providers = llm.configured_providers()
+    open_errors = [a for a in alerts.listing(session)["items"] if a["open"] and a["level"] == "error"]
+    legal_missing = legal.missing()
+
+    def c(id_, title, ok, detail, fix, level="required"):
+        return {"id": id_, "title": title, "ok": bool(ok), "level": level, "detail": detail, "fix": "" if ok else fix}
+    checks = [
+        c("admin_signin", "Platform sign-in is on", bool(cfg.api_tokens) and not cfg.open_access, "Anyone with the address can open the portal and every business." if (cfg.open_access or not cfg.api_tokens) else "The portal needs the admin token.", "Set LAB_API_TOKENS and LAB_OPEN_ACCESS=false on the server."),
+        c("owner_sms", "Sign-in codes can be sent by SMS", sms.configured() and phone["connected"], "Owners cannot sign in with a new number until SMS works." if not (sms.configured() and phone["connected"]) else "SMS is set up.",
+          "Save the Plivo account under Integrations, then set MUNSHI_SMS_SENDER, MUNSHI_DLT_ENTITY_ID, MUNSHI_DLT_TEMPLATE_ID and MUNSHI_OTP_TEMPLATE (India needs a registered sender and template)."),
+        c("legal", "Policy pages name the company and the grievance officer", not legal_missing, ("Still to fill: " + ", ".join(legal_missing)) if legal_missing else "Filled in.", "Set LEGAL_ENTITY, LEGAL_ADDRESS, GRIEVANCE_NAME, GRIEVANCE_EMAIL, SUPPORT_EMAIL and LEGAL_JURISDICTION on the server, then have a lawyer read /legal/privacy and /legal/terms."),
+        c("ai", "An AI provider is connected", bool(providers), ", ".join(providers) or "None.", "Add an AI key under Integrations."),
+        c("ai_backup", "A second AI provider is ready if the first fails or runs out", len(providers) >= 2, f"{len(providers)} connected." if providers else "None.", "Add a second provider (for example Sarvam) so calls keep being answered when one hits its limit.", "recommended"),
+        c("phone", "A phone line is connected", phone["connected"], phone["number"] or "Not connected.", "Add the Plivo Auth ID, token and number under Integrations."),
+        c("https", "The public address uses https", base.startswith("https://"), base, "Serve the app over https and set PUBLIC_BASE_URL."),
+        c("secret_key", "Keys are stored encrypted", _box(request) is not None, "LAB_SECRET_KEY is set." if _box(request) else "No encryption key.", "Set LAB_SECRET_KEY (32+ characters) on the server."),
+        c("database", "The database is a managed server database, not a file", not cfg.database_url.startswith("sqlite"), cfg.database_url.split("://")[0], "Point DATABASE_URL at Postgres (Supabase)."),
+        c("alerts_webhook", "Alerts reach you (Slack, Discord or any webhook)", bool(__import__("os").getenv("ALERT_WEBHOOK_URL")), "Alerts are saved here and shown on this page, but nobody is told." if not __import__("os").getenv("ALERT_WEBHOOK_URL") else "Webhook is set.", "Set ALERT_WEBHOOK_URL on the server.", "recommended"),
+        c("no_open_alerts", "No open errors", not open_errors, ("; ".join(a["title"] for a in open_errors[:3])) or "None.", "Open the alerts on the Overview page.", "required"),
+        c("demo_off", "Demo sign-in number is switched off", not __import__("assistant.auth", fromlist=["x"]).demo_enabled(), "Anyone can enter the demo shop with the sample number." if __import__("assistant.auth", fromlist=["x"]).demo_enabled() else "Off.", "Set MUNSHI_DEMO_LOGIN=off when you stop showing the demo.", "recommended"),
+        c("whatsapp", "WhatsApp is connected", settings_store.whatsapp_status(session, _box(request)).get("connected", False), "Owners cannot message callers from the app until it is." , "Connect WhatsApp under Integrations.", "recommended"),
+        c("backups", "Database backups are on (confirm in Supabase)", False, "This cannot be checked from here.", "In Supabase: Database, Backups. Use a paid plan for daily backups or point-in-time recovery, and test one restore. Also download a copy from /api/assistant/admin/backup.", "required"),
+    ]
+    return {"checks": checks, "ready": all(x["ok"] for x in checks if x["level"] == "required" and x["id"] != "backups"), "needed": [x["id"] for x in checks if not x["ok"] and x["level"] == "required"]}
+
+
+@router.get("/backup")
+def download_backup(session: Session = Depends(get_session)):
+    """The whole database as a compressed file. Contains callers' numbers and conversations: keep it private."""
+    from . import backup
+
+    blob = backup.to_bytes(session)
+    config.audit(session, "system", f"Backup file downloaded ({len(blob) // 1024} KB)", business_id=None)
+    return Response(blob, media_type="application/gzip", headers={"Content-Disposition": f'attachment; filename="munshi-backup-{utcnow().strftime("%Y%m%d-%H%M")}.json.gz"'})

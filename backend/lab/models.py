@@ -287,6 +287,7 @@ class Business(Base):
     key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)  # sha256 of the owner's private link key
     key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # the same key, encrypted, so the admin can show the link again
     settings: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # profile, knowledge window, budget, prompt overrides
+    owner_phone: Mapped[str] = mapped_column(String(20), default="", nullable=False, index=True)  # the number the owner signs in with (E.164)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
@@ -400,3 +401,46 @@ class AuditEntry(Base):
     area: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # business | board | prompts | integrations | budget | system
     summary: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
+class OtpCode(Base):
+    """A sign-in code sent to a phone number. Only a hash is kept, and it works once."""
+    __tablename__ = "otp_codes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip: Mapped[str] = mapped_column(String(45), default="", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OwnerSession(Base):
+    """A signed-in phone or browser. The token itself is never stored, only its hash."""
+    __tablename__ = "owner_sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    device: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Alert(Base):
+    """Something the platform operator should know about (AI quota used up, SMS failing, spend near the limit)."""
+    __tablename__ = "alerts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(80), nullable=False, index=True)  # the same problem keeps one row, with a count
+    level: Mapped[str] = mapped_column(String(10), default="warn", nullable=False)  # info | warn | error
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

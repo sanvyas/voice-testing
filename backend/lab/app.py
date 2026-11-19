@@ -90,12 +90,18 @@ async def lab_lifespan(app: FastAPI):
             await asyncio.sleep(600)
 
     sweeper = asyncio.create_task(sweep())
+    from assistant import alerts as assistant_alerts
+    alert_task = asyncio.create_task(assistant_alerts.loop())
+    from assistant import retention as assistant_retention
+    retention_task = asyncio.create_task(assistant_retention.loop())
     logger.info("Testing lab ready (env=%s, auth=%s)", settings.env, "on" if settings.api_tokens and not settings.open_access else "OFF")
     try:
         yield
     finally:
         check.cancel()
         sweeper.cancel()
+        alert_task.cancel()
+        retention_task.cancel()
         await app.state.lab_runner.shutdown()
         await llm.close_client()
         db.dispose_db()
@@ -156,6 +162,14 @@ def install(app: FastAPI) -> None:
     from assistant.admin import router as assistant_admin_router
     from assistant.router import router as assistant_router
 
+    from assistant.auth import router as auth_router
+
+    app.include_router(auth_router, prefix="/api/assistant/auth", tags=["sign-in"])
+    from fastapi.responses import HTMLResponse
+    from assistant import legal as legal_pages
+
+    for path, make in (("/legal", legal_pages.index), ("/legal/privacy", legal_pages.privacy), ("/legal/terms", legal_pages.terms), ("/legal/delete-account", legal_pages.delete_account)):
+        app.add_api_route(path, (lambda make=make: HTMLResponse(make())), methods=["GET"], include_in_schema=False)  # public on purpose: people read them before signing in
     app.include_router(assistant_router, prefix="/api/assistant", tags=["assistant"])
     app.include_router(assistant_admin_router, prefix="/api/assistant", tags=["assistant-admin"])
     app.include_router(phone_router, tags=["telephony"])  # Plivo webhooks: checked by Plivo's signature, not the access token

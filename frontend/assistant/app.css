@@ -201,3 +201,28 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .importcard i { width: 46px; height: 46px; border-radius: 14px; background: var(--green); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
 .importcard .main { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .importcard b { font-size: 17px; } .importcard small { font-size: 13.5px; color: var(--muted); line-height: 1.35; }
 .link.small { font-size: 14px; margin-top: 6px; min-height: 44px; }
+
+/* sign in */
+.login { position: fixed; inset: 0; z-index: 100; background: var(--bg, #F5F7F6); display: flex; justify-content: center; overflow-y: auto; }
+.login-card { width: 100%; max-width: 440px; min-height: 100%; display: flex; flex-direction: column; padding: 20px 22px 28px; }
+.login-top { display: flex; align-items: center; justify-content: space-between; } .login-brand { display: flex; align-items: center; gap: 10px; font: 700 22px 'Space Grotesk'; }
+.login-lang { min-height: 44px; padding: 0 14px; border-radius: 22px; border: 1.5px solid var(--ring); background: #fff; font-weight: 600; cursor: pointer; }
+.login-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 28px 0; }
+.login-body h1 { margin: 0; font: 700 30px/1.2 'Space Grotesk', 'Noto Sans Devanagari'; } .login-body p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.5; }
+.login .phone { display: flex; align-items: center; gap: 0; border: 2px solid var(--ring); border-radius: 16px; background: #fff; min-height: 60px; overflow: hidden; }
+.login .phone span { padding: 0 14px; font: 600 19px 'Space Grotesk'; color: var(--muted); border-right: 1.5px solid var(--line2); height: 60px; display: flex; align-items: center; }
+.login .phone input, .login input.otp { flex: 1; min-width: 0; border: 0; outline: 0; background: none; padding: 0 14px; font: 600 22px 'Space Grotesk'; letter-spacing: .04em; min-height: 58px; }
+.login .phone:focus-within, .login input.otp:focus { border-color: var(--green); }
+.login input.otp { border: 2px solid var(--ring); border-radius: 16px; background: #fff; text-align: center; letter-spacing: .5em; font-size: 28px; }
+.login .agree { display: flex; gap: 12px; align-items: flex-start; font-size: 14.5px; line-height: 1.5; color: #3a4a45; cursor: pointer; }
+.login .agree input { width: 24px; height: 24px; flex: none; margin-top: 1px; accent-color: var(--green); } .login .agree a { color: var(--green); font-weight: 700; }
+.login .big { min-height: 58px; border-radius: 16px; background: var(--green); color: #fff; border: 0; font: 700 17px inherit; cursor: pointer; } .login .big:disabled { opacity: .6; }
+.login .link { min-height: 48px; justify-content: center; } .login .link:disabled { color: var(--muted); } .login .link.demo { border: 1.5px dashed var(--green); border-radius: 14px; }
+.login-err { color: var(--warn-d); font-weight: 700; font-size: 15px; line-height: 1.4; }
+.login-row { display: flex; justify-content: space-between; } .login-foot { text-align: center; color: var(--muted); font-size: 13.5px; }
+
+/* onboarding */
+.steps { display: flex; gap: 6px; margin-left: auto; } .steps i { width: 22px; height: 6px; border-radius: 3px; background: #d6dedb; } .steps i.done { background: var(--green); opacity: .55; } .steps i.now { background: var(--green); }
+.start { display: flex; flex-direction: column; gap: 12px; padding-bottom: 120px; } .stepno { font-size: 13px; font-weight: 700; color: var(--green); letter-spacing: .04em; text-transform: uppercase; }
+.start .chips { display: flex; flex-wrap: wrap; gap: 8px; } .start .chips .rchip.on { background: var(--green); color: #fff; } .start .note { margin: 4px 2px; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+.start-bar { display: flex; flex-direction: column; gap: 4px; } .start-bar .skip { justify-content: center; min-height: 44px; }

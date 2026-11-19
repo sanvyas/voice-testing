@@ -53,6 +53,47 @@ def _mine(session: Session, model, id_: str, label: str):
     return row
 
 
+@router.get("/me")
+def whoami(request: Request, session: Session = Depends(get_session)):
+    """Who is signed in, for the app header and the sign-out button."""
+    from . import auth
+
+    b = tenant.business(session)
+    return {"role": getattr(request.state, "role", ""), "business_id": b.id, "name": b.name, "phone": auth.mask(b.owner_phone) if b.owner_phone else "", "demo": bool(auth.demo_enabled() and b.owner_phone == auth.DEMO_PHONE)}
+
+
+class DeleteAccountIn(Strict):
+    confirm: str = Field(max_length=20)
+
+
+def _owner_only(request: Request) -> None:
+    if getattr(request.state, "role", "") != "owner":
+        raise ServiceError("Only the shop owner can do this here. Platform admins use the portal.", 403)
+
+
+@router.get("/account/export")
+def account_export(request: Request, session: Session = Depends(get_session)):
+    """The owner's own data as a file."""
+    from fastapi.responses import JSONResponse
+
+    from . import account
+
+    _owner_only(request)
+    return JSONResponse(account.export(session), headers={"Content-Disposition": 'attachment; filename="munshi-my-data.json"'})
+
+
+@router.post("/account/delete")
+def account_delete(body: DeleteAccountIn, request: Request, session: Session = Depends(get_session)):
+    """Delete the business and everything in it. The owner types DELETE to confirm."""
+    from . import account
+
+    _owner_only(request)
+    if body.confirm.strip().upper() != "DELETE":
+        raise ServiceError("Type DELETE to confirm.", 422)
+    account.delete_account(session)
+    return {"deleted": True}
+
+
 # --- today ---------------------------------------------------------------------------
 
 # --- the owner app: people, threads, shop info, plan, voice ----------------------------

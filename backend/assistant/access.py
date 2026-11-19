@@ -17,6 +17,10 @@ from . import tenant
 
 
 def _owner(session, raw: str) -> str | None:
+    from . import auth
+
+    if raw.startswith(auth.SESSION_PREFIX):  # signed in with a phone number
+        return auth.by_session(session, raw)
     row = tenant.by_key(session, raw)
     return row.id if row else None
 
@@ -41,7 +45,7 @@ async def scope(request: Request) -> None:
     if key:
         biz = await run_db(lambda s: _owner(s, key))
         if not biz:
-            raise HTTPException(401, "This link is not valid any more. Ask for a new one.")
+            raise HTTPException(401, "Your sign-in has ended. Please sign in again.")
         request.state.role = "owner"
         tenant.activate(biz)
         return
@@ -63,6 +67,6 @@ async def any_member(request: Request) -> None:
     key = request.headers.get("x-business-key", "")
     if key:
         if not await run_db(lambda s: _owner(s, key)):
-            raise HTTPException(401, "This link is not valid any more. Ask for a new one.")
+            raise HTTPException(401, "Your sign-in has ended. Please sign in again.")
         return
     require_auth(request)

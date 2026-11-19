@@ -1,5 +1,6 @@
 import { h, mount, ago } from '/lab/ui.js';
 import { A, getConfig, ic, ICONS, rupees, who } from '/assistant/net.js';
+import { apiDownload } from '/lab/api.js';
 import { choose, selectedId } from '../ctx.js';
 
 const kpi = (label, value, sub, hot) => h('div', { class: 'kpi' + (hot ? ' hot' : '') }, h('div', { class: 'l' }, label), h('div', { class: 'v' }, value), sub ? h('div', { class: 's' }, sub) : null);
@@ -33,13 +34,22 @@ async function businessOverview(page) {
 const LINKS = { phone: ['businesses', 'Add number'], setup: ['businesses', 'Open'], off: ['businesses', 'Open'], budget: ['costs', 'Open'], stale: ['knowledge', 'Check prices'], backlog: ['calls', 'See calls'], link: ['businesses', 'Create link'], paused: ['businesses', 'Open'] };
 
 async function platformOverview(page) {
-  const [o, p] = await Promise.all([A('/admin/overview?days=30'), A('/admin/platform')]);
+  const [o, p, al, rd] = await Promise.all([A('/admin/overview?days=30'), A('/admin/platform'), A('/admin/alerts'), A('/admin/readiness')]);
   const todo = [...o.attention];
   if (!p.signed_in_required) todo.push({ business_id: '', business: 'Platform', kind: 'signin', level: 'bad', text: 'Sign-in is off: anyone with this address can open the portal and every business. Set LAB_OPEN_ACCESS=false and LAB_API_TOKENS on the server.' });
-  window.dispatchEvent(new CustomEvent('portal-attention', { detail: todo.length }));
+  window.dispatchEvent(new CustomEvent('portal-attention', { detail: todo.length + al.open }));
   const max = Math.max(1, ...o.daily.map((d) => d.calls));
+  const resolve = async (id) => { await A(`/admin/alerts/${id}/resolve`, { method: 'POST' }); location.reload(); };
+  const open = al.items.filter((a) => a.open);
+  const needed = rd.checks.filter((c) => !c.ok);
   mount(page,
     h('div', { class: 'pagehead' }, h('div', {}, h('h1', { class: 'title' }, 'Overview'), h('div', { class: 'sub' }, 'Every business on the platform, last 30 days.')), h('a', { class: 'btn', style: 'width:auto', href: '#/businesses' }, 'Manage businesses')),
+    open.length ? h('div', { class: 'card', role: 'alert', style: 'border:2px solid var(--bad,#b3261e)' }, h('h2', { class: 'sec', style: 'margin-bottom:6px' }, `Alerts (${open.length})`),
+      ...open.map((a) => h('div', { class: 'attn' }, h('span', { class: 'ico warn' }, ic(ICONS.info)), h('div', { class: 'grow' }, h('div', { class: 't' }, a.title + (a.count > 1 ? ` · ${a.count}×` : '')), h('div', { class: 'd' }, `${a.detail} (last ${ago(a.last_at)})`)), h('button', { class: 'badge act', onclick: () => resolve(a.id) }, 'Dismiss'))),
+      al.webhook ? null : h('div', { class: 'small muted', style: 'margin-top:8px' }, 'Nobody is told about these yet. Set ALERT_WEBHOOK_URL on the server to get them in Slack or Discord.')) : null,
+    h('div', { class: 'card' }, h('div', { class: 'row between' }, h('h2', { class: 'sec', style: 'margin-bottom:6px' }, rd.ready ? 'Ready for real customers' : `Launch checklist: ${needed.filter((c) => c.level === 'required').length} required, ${needed.filter((c) => c.level !== 'required').length} recommended still open`),
+      h('button', { class: 'small', style: 'color:var(--primary);font-weight:600;background:none;border:0;cursor:pointer', onclick: () => apiDownload('/api/assistant/admin/backup', 'munshi-backup.json.gz').catch((e) => alert(e.message)) }, 'Download backup')),
+      h('div', {}, ...rd.checks.map((c) => h('div', { class: 'attn' }, h('span', { class: 'ico ' + (c.ok ? '' : 'warn') }, ic(c.ok ? ICONS.check : ICONS.info)), h('div', { class: 'grow' }, h('div', { class: 't' }, c.title + (!c.ok && c.level !== 'required' ? ' (recommended)' : '')), h('div', { class: 'd' }, c.ok ? c.detail : `${c.detail} ${c.fix}`)))))),
     h('div', { class: 'kpis' }, kpi('Businesses', String(o.businesses), `${o.active} active`), kpi('Calls answered', String(o.calls), 'by the assistant'), kpi('Waiting for owners', String(o.needs_action), o.needs_action ? 'across all businesses' : 'all clear', o.needs_action > 0),
       kpi('Spend', rupees(o.cost) || 'Rs 0', o.per_call ? `${rupees(o.per_call)} per call` : 'no calls yet')),
     h('div', { class: 'grid2' },

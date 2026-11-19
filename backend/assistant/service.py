@@ -18,7 +18,7 @@ from lab.models import Call, CallNote, CallTurn, Contact, WaMessage, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, lexicon, prompts, tenant, whatsapp
+from . import alerts, board, config, lexicon, prompts, tenant, whatsapp
 
 logger = logging.getLogger("ai_therapy.assistant")
 
@@ -26,7 +26,7 @@ SECRET_BOX = None  # set at startup (lab/app.py) so background work can read sav
 MAX_TURNS = 60  # caller + assistant messages in one call; a cost and runaway guard
 INR_PER_USD = 95.0
 DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True,
-                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}, "ui_lang": "hi", "notes": []}
+                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}, "ui_lang": "hi", "notes": [], "onboarded": False}
 
 
 # --- phone numbers ------------------------------------------------------------------
@@ -75,6 +75,7 @@ class ProfileIn(BaseModel):
     forwarding_done: bool = False
     ui_lang: str = Field(default="hi", pattern="^(hi|en)$")  # the language the owner reads the app in: call notes are translated into it
     confirmed: dict = Field(default_factory=dict)  # when the owner last said a shop fact (address, hours, delivery, rules) is still right
+    onboarded: bool = False  # the owner has been through the first-run steps
     notes: list[dict] = Field(default_factory=list, max_length=20)  # extra shop information under the owner's own heading: payment, offers, services, other
 
     model_config = {"extra": "forbid", "str_strip_whitespace": True}
@@ -275,7 +276,9 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
     try:
         result = await llm.chat(messages, temperature=0.6, max_tokens=320, retries=1)
     except llm.LLMError as exc:
+        alerts.llm_failed(exc)
         raise ServiceError(str(exc), 502) from None
+    alerts.llm_ok()
     reply, ended = _clean_reply(result.reply)
     if not reply:
         reply = "Sorry, could you say that once more?"
@@ -474,6 +477,7 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001 - a failed summary must never lose the call
             logger.warning("summary failed for %s: %s", call_id, exc)
             error = f"The AI summary failed ({str(exc)[:120]}). Read the transcript."
+            alerts.llm_failed(exc)
             summary = Summary(summary="Summary unavailable. Read the transcript below.", importance="action")
 
     def save(session: Session):
