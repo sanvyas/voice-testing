@@ -126,6 +126,10 @@ def main():
             got = detail.get("importance")
             label_ok = got == c["importance"]
             rows.append(dict(id=c["id"], lang=c["lang"], family=c["family"], want=c["importance"], got=got, ended=ended, issues=issues, label_ok=label_ok, summary=detail.get("summary"), turns=turns))
+            if issues or not label_ok:
+                for t in turns:
+                    print("      ", "M" if t["role"] == "assistant" else "C", t["text"][:160].replace("\n", " "), flush=True)
+                print("       issues:", "; ".join(issues)[:300], "| notes:", detail.get("summary"), flush=True)
             print(f"{c['id']:42} want={c['importance']:6} got={str(got):6} ended={ended!s:5} issues={len(issues)}", flush=True)
     finally:
         if not a.keep and api.business:

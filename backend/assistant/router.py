@@ -110,6 +110,32 @@ async def shop_understand(body: UnderstandIn):
     return await people.understand(body.text)
 
 
+class FactIn(Strict):
+    heading: str = Field(min_length=1, max_length=20)
+    text: str = Field(min_length=1, max_length=700)
+    title: str = Field(default="", max_length=40)
+
+
+class FactEdit(Strict):
+    text: str = Field(min_length=1, max_length=700)
+    title: str | None = Field(default=None, max_length=40)
+
+
+@router.post("/shop/fact", status_code=201)
+def shop_add_fact(body: FactIn, session: Session = Depends(get_session)):
+    return people.set_fact(session, body.heading, body.text, body.title)
+
+
+@router.put("/shop/fact/{item_id}")
+def shop_edit_fact(item_id: str, body: FactEdit, session: Session = Depends(get_session)):
+    return people.update_fact(session, item_id, body.text, body.title)
+
+
+@router.delete("/shop/fact/{item_id}")
+def shop_delete_fact(item_id: str, session: Session = Depends(get_session)):
+    return people.delete_fact(session, item_id)
+
+
 class ShopApplyIn(Strict):
     rates: list[dict] = Field(default_factory=list, max_length=40)
     facts: list[dict] = Field(default_factory=list, max_length=10)
@@ -233,6 +259,7 @@ class ContactUpdate(Strict):
 
 class ImportIn(Strict):
     text: str = Field(min_length=1, max_length=60000)
+    always_ring: bool = True
 
 
 @router.get("/contacts")
@@ -247,7 +274,7 @@ def create_contact(body: ContactIn, session: Session = Depends(get_session)):
 
 @router.post("/contacts/import")
 def import_contacts(body: ImportIn, session: Session = Depends(get_session)):
-    return service.import_contacts(session, body.text)
+    return service.import_contacts(session, body.text, body.always_ring)
 
 
 @router.put("/contacts/{contact_id}")

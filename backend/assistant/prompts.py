@@ -163,7 +163,10 @@ def knowledge_block(profile: dict, items=()) -> str:
     facts = [f"About the business: {profile['about']}" if profile.get("about") else "",
              f"Address: {profile['address']}" if profile.get("address") else "",
              f"Opening hours: {profile['hours']}" if profile.get("hours") else "",
+             f"Home delivery: {profile['delivery']}" if profile.get("delivery") else "",
              board_block(profile, items)]
+    for n in profile.get("notes") or []:
+        facts.append(f"{n.get('heading') or n.get('kind', '').title()}: {n.get('text', '')}")
     if profile.get("mode") == "board" and profile.get("faq"):
         facts.append(f"Other answers you may give:\n{profile['faq']}")
     if profile.get("rules"):

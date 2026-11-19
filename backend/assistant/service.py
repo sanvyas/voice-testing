@@ -26,7 +26,7 @@ SECRET_BOX = None  # set at startup (lab/app.py) so background work can read sav
 MAX_TURNS = 60  # caller + assistant messages in one call; a cost and runaway guard
 INR_PER_USD = 95.0
 DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True,
-                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}, "ui_lang": "hi"}
+                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}, "ui_lang": "hi", "notes": []}
 
 
 # --- phone numbers ------------------------------------------------------------------
@@ -75,8 +75,20 @@ class ProfileIn(BaseModel):
     forwarding_done: bool = False
     ui_lang: str = Field(default="hi", pattern="^(hi|en)$")  # the language the owner reads the app in: call notes are translated into it
     confirmed: dict = Field(default_factory=dict)  # when the owner last said a shop fact (address, hours, delivery, rules) is still right
+    notes: list[dict] = Field(default_factory=list, max_length=20)  # extra shop information under the owner's own heading: payment, offers, services, other
 
     model_config = {"extra": "forbid", "str_strip_whitespace": True}
+
+    @field_validator("notes")
+    @classmethod
+    def _notes(cls, v: list[dict]) -> list[dict]:
+        kinds = ("payment", "offers", "services", "other")
+        out = []
+        for n in v:
+            text = str(n.get("text", "")).strip()[:700]
+            if text and n.get("kind") in kinds:
+                out.append({"id": str(n.get("id") or "")[:20], "kind": n["kind"], "heading": str(n.get("heading") or "").strip()[:40], "text": text, "confirmed": str(n.get("confirmed") or "")[:40]})
+        return out
 
     @field_validator("languages")
     @classmethod
@@ -128,7 +140,7 @@ def add_contact(session: Session, name: str, phone: str, always_ring: bool = Tru
     return c
 
 
-def import_contacts(session: Session, text: str) -> dict:
+def import_contacts(session: Session, text: str, always_ring: bool = True) -> dict:
     """One contact per line: ``Name, 9876543210`` (a bare number also works)."""
     added, skipped = 0, []
     for line in text.splitlines():
@@ -140,7 +152,7 @@ def import_contacts(session: Session, text: str) -> dict:
         if len(parts) == 2 and re.fullmatch(r"[+\d\s()-]{8,}", parts[0]) and re.search(r"[A-Za-z]", parts[1]):  # "9876543210, Ravi" also works
             name, number = parts[1], parts[0]
         try:
-            add_contact(session, name, number)
+            add_contact(session, name, number, always_ring)
             added += 1
         except ServiceError as exc:
             skipped.append(f"{line}: {exc.message}")

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import llm
@@ -191,6 +192,10 @@ def known(session: Session) -> dict:
 
 FACT_LABELS = {"delivery": "Home delivery", "address": "Shop address", "hours": "Timing", "rules": "Rules"}
 FACT_GROUP = {"delivery": "delivery", "address": "shop", "hours": "shop", "rules": "shop"}
+NOTE_KINDS = {"payment": "Payment", "offers": "Offers", "services": "Services", "other": "Other"}
+HEADINGS = {**FACT_LABELS, **NOTE_KINDS}
+FACT_LIMITS = {"address": 200, "hours": 200, "delivery": 300, "rules": 600}
+MAX_NOTES = 20
 
 
 def _age_hours(dt: datetime | None) -> int:
@@ -213,10 +218,22 @@ def shop(session: Session) -> dict:
         at = datetime.fromisoformat(conf[field].replace("Z", "+00:00")) if conf.get(field) else None
         age = _age_hours(at)
         facts.append({"id": f"fact:{field}", "field": field, "group": FACT_GROUP[field], "name": FACT_LABELS[field], "text": text, "age_hours": age, "stale": age >= STALE_FACT_HOURS})
+    for n in profile.get("notes") or []:
+        at = datetime.fromisoformat(n["confirmed"].replace("Z", "+00:00")) if n.get("confirmed") else None
+        age = _age_hours(at)
+        facts.append({"id": f"note:{n['id']}", "field": n["kind"], "group": "more", "name": n.get("heading") or NOTE_KINDS[n["kind"]], "text": n["text"], "age_hours": age, "stale": age >= STALE_FACT_HOURS})
     return {"rates": rates, "facts": facts, "stale": sum(1 for r in rates if r["stale"]) + sum(1 for f in facts if f["stale"]), "stale_days": days}
 
 
 def confirm(session: Session, item_id: str) -> dict:
+    if item_id.startswith("note:"):
+        profile = service.get_profile(session)
+        for n in profile["notes"]:
+            if f"note:{n['id']}" == item_id:
+                n["confirmed"] = iso(utcnow())
+                _save(session, profile)
+                return shop(session)
+        raise ServiceError("Item not found", 404)
     if item_id.startswith("fact:"):
         field = item_id.split(":", 1)[1]
         if field not in FACT_LABELS:
@@ -234,9 +251,9 @@ def confirm(session: Session, item_id: str) -> dict:
 
 
 UNDERSTAND_PROMPT = """You read a short message from a small shop owner in India (Hindi, English or Hinglish) that updates the shop's information. Reply with ONE JSON object and nothing else:
-{"rates": [{"name": item name as written, "price": price with unit if said, like "44/kg" or "170"}], "facts": [{"field": "delivery" | "hours" | "address" | "rules", "text": one short sentence in the owner's language}]}
+{"rates": [{"name": item name as written, "price": price with unit if said, like "44/kg" or "170"}], "facts": [{"field": "delivery" | "hours" | "address" | "rules" | "payment" | "offers" | "services" | "other", "text": one short sentence in the owner's language}]}
 - Use an item name from BOARD ITEMS when the owner means one of them.
-- A closed day, opening time or a time range is "hours". Delivery area, charge or timing is "delivery". Credit, returns or other policies are "rules".
+- A closed day, opening time or a time range is "hours". Delivery area, charge or timing is "delivery". Credit, returns or other policies are "rules". How customers can pay (cash, UPI, card) is "payment". A discount, combo or festival offer is "offers". What else the shop does besides selling the listed items is "services". Anything else worth telling callers is "other".
 - Use only what the message says. If something is unclear leave it out. Empty lists are fine."""
 
 
@@ -272,8 +289,8 @@ async def understand(text: str) -> dict:
             rates.append({"name": m.name if m else name, "price": price, "old_price": m.price if m else "", "action": "update" if m else "new"})
         for f in (data.get("facts") or [])[:6]:
             field, body = f.get("field"), re.sub(r"\s+", " ", str(f.get("text", ""))).strip()[:300]
-            if field in FACT_LABELS and body:
-                facts.append({"field": field, "label": FACT_LABELS[field], "text": body, "old": (profile.get(field) or "")})
+            if field in HEADINGS and body:
+                facts.append({"field": field, "label": HEADINGS[field], "text": body, "old": (profile.get(field) or "") if field in FACT_LABELS else ""})
         return {"from": text, "rates": rates, "facts": facts}
 
     out = await run_db(build)
@@ -287,9 +304,14 @@ def apply(session: Session, rates: list[dict], facts: list[dict]) -> dict:
     profile = service.get_profile(session)
     changed = False
     for f in facts:
-        field, text = f.get("field"), (f.get("text") or "").strip()
+        field, text = f.get("field"), (f.get("text") or "").strip()[:700]
+        if field in NOTE_KINDS and text and len(profile["notes"]) < MAX_NOTES and not any(n["text"] == text for n in profile["notes"]):
+            profile["notes"] = [*profile["notes"], _note(field, text, str(f.get("title") or ""))]
+            changed = True
+            continue
         if field not in FACT_LABELS or not text:
             continue
+        text = text[: FACT_LIMITS[field]]
         old = (profile.get(field) or "").strip()
         profile[field] = (f"{old}\n{text}" if old and field == "rules" and text not in old else text)
         changed = True
@@ -325,3 +347,86 @@ def plan_update(session: Session, *, upi: str | None = None, cancelled: bool | N
     tenant.put(session, "plan", saved)
     config.audit(session, "business", "Plan: " + ("cancelled" if saved.get("cancelled") else "active") + (", UPI saved" if upi else ""))
     return plan(session)
+
+
+# --- adding, editing and removing shop information by hand ----------------------------------
+
+def _save(session: Session, profile: dict) -> None:
+    service.save_profile(session, service.ProfileIn(**profile))
+
+
+def _note(kind: str, text: str, title: str = "") -> dict:
+    heading = title.strip()[:40] if kind == "other" and title.strip() else NOTE_KINDS[kind]
+    return {"id": uuid.uuid4().hex[:10], "kind": kind, "heading": heading, "text": text, "confirmed": iso(utcnow())}
+
+
+def _clean(text: str, limit: int) -> str:
+    text = "\n".join(re.sub(r"[ \t]+", " ", line).strip() for line in (text or "").strip().splitlines()).strip()
+    if not text:
+        raise ServiceError("Write the information first.", 422)
+    if len(text) > limit:
+        raise ServiceError(f"That is too long. Keep it under {limit} letters.", 422)
+    return text
+
+
+def _write_fact(profile: dict, field: str, text: str) -> None:
+    profile[field] = _clean(text, FACT_LIMITS[field])
+    if field == "hours":  # typed timing replaces the open/close pair, which would otherwise overwrite it
+        profile["open"] = profile["close"] = ""
+
+
+def set_fact(session: Session, heading: str, text: str, title: str = "") -> dict:
+    """Add information under a heading the owner picked. Address, timing, delivery and rules hold one text, which this replaces."""
+    profile = service.get_profile(session)
+    if heading in FACT_LABELS:
+        _write_fact(profile, heading, text)
+    elif heading in NOTE_KINDS:
+        if len(profile["notes"]) >= MAX_NOTES:
+            raise ServiceError(f"You can keep up to {MAX_NOTES} extra notes. Remove one first.", 409)
+        profile["notes"] = [*profile["notes"], _note(heading, _clean(text, 700), title)]
+    else:
+        raise ServiceError("Pick a heading: " + ", ".join(HEADINGS), 422)
+    _save(session, profile)
+    config.audit(session, "board", f"Shop info added under “{HEADINGS[heading]}”")
+    return shop(session)
+
+
+def update_fact(session: Session, item_id: str, text: str, title: str | None = None) -> dict:
+    profile = service.get_profile(session)
+    if item_id.startswith("fact:") and item_id.split(":", 1)[1] in FACT_LABELS:
+        _write_fact(profile, item_id.split(":", 1)[1], text)
+    elif item_id.startswith("note:"):
+        for n in profile["notes"]:
+            if f"note:{n['id']}" == item_id:
+                n["text"] = _clean(text, 700)
+                if title is not None and n["kind"] == "other":
+                    n["heading"] = title.strip()[:40] or NOTE_KINDS["other"]
+                n["confirmed"] = iso(utcnow())
+                break
+        else:
+            raise ServiceError("Item not found", 404)
+    else:
+        raise ServiceError("Item not found", 404)
+    _save(session, profile)
+    config.audit(session, "board", "Shop info changed")
+    return shop(session)
+
+
+def delete_fact(session: Session, item_id: str) -> dict:
+    profile = service.get_profile(session)
+    if item_id.startswith("fact:") and item_id.split(":", 1)[1] in FACT_LABELS:
+        field = item_id.split(":", 1)[1]
+        profile[field] = ""
+        if field == "hours":
+            profile["open"] = profile["close"] = ""
+        profile["confirmed"] = {k: v for k, v in (profile.get("confirmed") or {}).items() if k != field}
+    elif item_id.startswith("note:"):
+        kept = [n for n in profile["notes"] if f"note:{n['id']}" != item_id]
+        if len(kept) == len(profile["notes"]):
+            raise ServiceError("Item not found", 404)
+        profile["notes"] = kept
+    else:
+        raise ServiceError("Item not found", 404)
+    _save(session, profile)
+    config.audit(session, "board", "Shop info removed")
+    return shop(session)
