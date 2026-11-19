@@ -223,7 +223,7 @@ def test_a_business_can_override_one_template_and_follows_the_platform_for_the_r
     assert start["greeting"] == "Platform hello from Sharma Traders."
     client.post(f"{API}/calls/{start['call']['id']}/turns", json={"content": "I need rice"})
     client.post(f"{API}/calls/{start['call']['id']}/end")
-    notes_prompt = ai.calls[-1][0]["content"]
+    notes_prompt = [c[0]["content"] for c in ai.calls if c[0]["content"].startswith("You write call notes") or "BANANA" in c[0]["content"]][-1]
     assert "Always say BANANA." in notes_prompt and "You write call notes for Ramesh." in notes_prompt and "FORMAT (fixed)" in notes_prompt
     # putting the platform text back clears the override, so the business follows the platform again
     client.put(f"{API}/prompts", json={"scope": "business", "templates": {"summary": ""}})

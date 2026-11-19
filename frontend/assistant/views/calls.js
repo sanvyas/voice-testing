@@ -1,13 +1,13 @@
 // Calls: one row per person. People who are waiting come first, in orange.
 import { h, mount } from '/lab/ui.js';
 import { A } from '../net.js';
-import { t, isHi, setLang, getLang, dayLabel, waitingFor, clock, initial } from '../i18n.js';
+import { t, getLang, dayLabel, waitingFor, clock, initial } from '../i18n.js';
 import { icon, Logo, sheet, isOnline, setOnline } from '../kit.js';
 import { shell, setBadge, saveProfile, go, setupDone } from '../shell.js';
 
 const TABS = [['need', ['आपकी ज़रूरत', 'Needs you']], ['good', ['जानने लायक', 'Good to know']], ['spam', ['काम की नहीं', 'Not worth it']], ['all', ['सब', 'All']]];
 const RANGES = [['any', ['सब दिन', 'All time']], ['today', ['आज', 'Today']], ['7d', ['7 दिन', '7 days']], ['30d', ['30 दिन', '30 days']]];
-const cacheKey = (tab) => `munshi.people.${tab}`;
+const cacheKey = (tab) => `munshi.people.${getLang()}.${tab}`;
 const readCache = (tab) => { try { return JSON.parse(localStorage.getItem(cacheKey(tab)) || 'null'); } catch { return null; } };
 const writeCache = (tab, data) => { try { localStorage.setItem(cacheKey(tab), JSON.stringify(data)); } catch { /* storage blocked */ } };
 
@@ -19,9 +19,7 @@ export async function render(root, { query }) {
   function drawHead() {
     const state = !setupDone() ? 'setup' : shell.profile.assistant_on ? 'on' : 'off';
     const label = { on: t(['Munshi चालू', 'Munshi ON']), off: t(['Munshi बंद', 'Munshi OFF']), setup: t(['सेटअप बाकी', 'Finish setup']) }[state];
-    mount(head, h('div', { class: 'brand' }, Logo(34), 'Munshi'), h('div', { style: 'display:flex;align-items:center;gap:8px' },
-      h('button', { class: `chip ${state}`, onclick: () => statusSheet(state) }, h('i'), label),
-      h('button', { class: 'lang', 'aria-label': 'Language', onclick: () => setLang(isHi() ? 'en' : 'hi') }, isHi() ? 'EN' : 'हि')));
+    mount(head, h('div', { class: 'brand' }, Logo(34), 'Munshi'), h('button', { class: `chip ${state}`, onclick: () => statusSheet(state) }, h('i'), label));
   }
   function statusSheet(state) {
     const on = shell.profile.assistant_on;
@@ -69,7 +67,7 @@ export async function render(root, { query }) {
 
   async function fetchList() {
     try {
-      data = await A(`/people?tab=${tab}&q=${encodeURIComponent(q.trim())}&range=${range}`);
+      data = await A(`/people?tab=${tab}&q=${encodeURIComponent(q.trim())}&range=${range}&lang=${getLang()}`);
       setOnline(true); if (!q.trim() && range === 'any') writeCache(tab, data);
     } catch (e) {
       if (e.status !== 0) throw e;

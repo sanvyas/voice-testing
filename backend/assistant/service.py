@@ -26,7 +26,7 @@ SECRET_BOX = None  # set at startup (lab/app.py) so background work can read sav
 MAX_TURNS = 60  # caller + assistant messages in one call; a cost and runaway guard
 INR_PER_USD = 95.0
 DEFAULT_PROFILE = {"business_name": "", "owner_name": "", "about": "", "hours": "", "faq": "", "rules": "", "languages": ["hi", "en"], "owner_phone": "", "assistant_on": True, "address": "", "mode": "message", "whatsapp_on": True,
-                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}}
+                   "voice": "v1", "open": "", "close": "", "delivery": "", "forwarding_done": False, "confirmed": {}, "ui_lang": "hi"}
 
 
 # --- phone numbers ------------------------------------------------------------------
@@ -73,6 +73,7 @@ class ProfileIn(BaseModel):
     close: str = Field(default="", max_length=8)
     delivery: str = Field(default="", max_length=300)
     forwarding_done: bool = False
+    ui_lang: str = Field(default="hi", pattern="^(hi|en)$")  # the language the owner reads the app in: call notes are translated into it
     confirmed: dict = Field(default_factory=dict)  # when the owner last said a shop fact (address, hours, delivery, rules) is still right
 
     model_config = {"extra": "forbid", "str_strip_whitespace": True}
@@ -485,7 +486,11 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
         session.flush()
         return call_detail(call)
 
-    return await run_db(save)
+    detail = await run_db(save)
+    from . import translate  # the owner's language, ready before they open the call
+    if detail.get("importance") != "ignore":  # spam and silence are translated only if the owner ever opens them
+        await translate.ensure([call_id], (await run_db(lambda s: get_profile(s))).get("ui_lang", "hi"))
+    return detail
 
 
 async def close_stale_calls(max_age_minutes: int = 60) -> int:

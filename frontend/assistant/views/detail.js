@@ -1,12 +1,13 @@
 // "Full details" of one call: what they asked, what is left for the owner to do, the order, what Munshi said, the conversation.
 import { h, mount } from '/lab/ui.js';
 import { A } from '../net.js';
-import { t, dayLabel, clock, duration, waitingFor } from '../i18n.js';
+import { t, dayLabel, clock, duration, waitingFor, getLang } from '../i18n.js';
 import { icon, sheet, toast, isOnline, telLink } from '../kit.js';
 import { go } from '../shell.js';
 
 export async function render(root, { param }) {
-  let c = await A(`/calls/${param}`);
+  const load = (turns = false) => A(`/calls/${param}?lang=${getLang()}${turns ? '&turns=true' : ''}`);
+  let c = await load();
   const phoneKey = c.caller_number || `call:${c.id}`;
   let trOpen = false;
   const days = Math.max(0, Math.round((Date.now() - new Date(c.started_at).getTime()) / 86400000));
@@ -21,7 +22,7 @@ export async function render(root, { param }) {
   }
   function addNote() {
     sheet(t(['अपना नोट जोड़ें', 'Add your note']), (close) => { const inp = h('input', { placeholder: t(['जैसे: कल सुबह फ़ोन करना', 'e.g. call again tomorrow morning']), maxlength: 300 });
-      return [inp, h('button', { class: 'primary', onclick: async () => { const v = inp.value.trim(); if (!v) return; try { await A(`/calls/${c.id}/notes`, { method: 'POST', body: { body: v } }); close(); c = await A(`/calls/${c.id}`); draw(); toast(t(['नोट जुड़ गया', 'Note added'])); } catch (e) { toast(e.message, { bad: true }); } } }, t(['सेव करें', 'Save']))]; });
+      return [inp, h('button', { class: 'primary', onclick: async () => { const v = inp.value.trim(); if (!v) return; try { await A(`/calls/${c.id}/notes`, { method: 'POST', body: { body: v } }); close(); c = await load(trOpen); draw(); toast(t(['नोट जुड़ गया', 'Note added'])); } catch (e) { toast(e.message, { bad: true }); } } }, t(['सेव करें', 'Save']))]; });
   }
   async function done() {
     try { await A(`/calls/${c.id}`, { method: 'PUT', body: { reviewed: true } }); window.dispatchEvent(new Event('munshi-changed')); toast(t(['हो गया में डाला', 'Marked done'])); go(`#/thread/${encodeURIComponent(phoneKey)}`); } catch (e) { toast(e.message, { bad: true }); }
@@ -41,7 +42,7 @@ export async function render(root, { param }) {
         order.mode ? h('div', { class: 'plain' }, (order.mode === 'delivery' ? t(['डिलीवरी', 'Delivery']) : t(['पिकअप', 'Pickup'])) + (order.when ? ' · ' + order.when : '')) : null,
         h('div', { class: 'plain' }, order.address ? t(['पता: ', 'Address: ']) + order.address : t(['पता: नहीं बताया', 'Address: not given']))) : null,
       h('div', { class: 'cardw did' }, h('b', {}, t(['Munshi ने क्या कहा', 'What Munshi said'])), ...did.map((x) => h('div', {}, icon('check', 20), x))),
-      h('button', { class: 'link', onclick: () => { trOpen = !trOpen; draw(); } }, trOpen ? t(['पूरी बातचीत छिपाएँ', 'Hide full conversation']) : t(['पूरी बातचीत पढ़ें', 'Read full conversation'])),
+      h('button', { class: 'link', onclick: async () => { trOpen = !trOpen; if (trOpen) { try { c = await load(true); } catch { /* the saved text is still shown */ } } draw(); } }, trOpen ? t(['पूरी बातचीत छिपाएँ', 'Hide full conversation']) : t(['पूरी बातचीत पढ़ें', 'Read full conversation'])),
       trOpen ? h('div', { class: 'tr', style: 'margin-top:-6px' }, ...c.turns.map((m) => h('div', { class: m.role === 'assistant' ? 'm' : 'c' }, m.content))) : null);
   }
   const dial = c.caller_number || c.callback_number;

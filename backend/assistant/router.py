@@ -17,7 +17,7 @@ from lab.runner import run_db
 from lab.schemas import Strict
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, costs, integrations, lexicon, people, prompts, service, tenant, vision, voices, whatsapp
+from . import board, config, costs, integrations, lexicon, people, prompts, service, tenant, translate, vision, voices, whatsapp
 from .access import admin_only, scope
 
 router = APIRouter(dependencies=[Depends(scope)])
@@ -57,14 +57,19 @@ def _mine(session: Session, model, id_: str, label: str):
 
 # --- the owner app: people, threads, shop info, plan, voice ----------------------------
 
+LANG = Query(None, pattern="^(hi|en)$")
+
+
 @router.get("/people")
-def get_people(tab: str = Query("need", pattern="^(need|good|spam|all)$"), q: str = Query("", max_length=60), range: str = Query("any", pattern="^(any|today|7d|30d)$"), session: Session = Depends(get_session)):
-    return people.people(session, tab, q, range)
+async def get_people(tab: str = Query("need", pattern="^(need|good|spam|all)$"), q: str = Query("", max_length=60), range: str = Query("any", pattern="^(any|today|7d|30d)$"), lang: str | None = LANG):
+    data = await run_db(lambda s: people.people(s, tab, q, range))
+    return await translate.localize_people(data, lang) if lang else data
 
 
 @router.get("/thread")
-def get_thread(phone: str = Query(min_length=1, max_length=40), session: Session = Depends(get_session)):
-    return people.thread(session, phone)
+async def get_thread(phone: str = Query(min_length=1, max_length=40), lang: str | None = LANG):
+    data = await run_db(lambda s: people.thread(s, phone))
+    return await translate.localize_thread(data, lang) if lang else data
 
 
 class MessageIn(Strict):
@@ -423,8 +428,9 @@ def list_calls(importance: str | None = Query(None, pattern="^(action|fyi|ignore
 
 
 @router.get("/calls/{call_id}")
-def get_call(call_id: str, session: Session = Depends(get_session)):
-    return service.call_detail(service.load_call(session, call_id))
+async def get_call(call_id: str, lang: str | None = LANG, turns: bool = Query(False)):
+    detail = await run_db(lambda s: service.call_detail(service.load_call(s, call_id)))
+    return await translate.localize_detail(call_id, detail, lang, turns) if lang else detail
 
 
 @router.post("/calls", status_code=201)

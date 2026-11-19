@@ -2,7 +2,7 @@ import { h, mount } from '/lab/ui.js';
 import { setBusinessKey } from '/lab/api.js';
 import { t, setLang, getLang } from './i18n.js';
 import { icon, isOnline, setOnline } from './kit.js';
-import { shell, load, refreshBadge } from './shell.js';
+import { shell, load, refreshBadge, saveProfile } from './shell.js';
 
 // A business opens its private link (…/assistant/?k=KEY) once; the key is kept on this device and removed from the address bar.
 const linkKey = new URLSearchParams(location.search).get('k');
@@ -55,7 +55,7 @@ async function route() {
 }
 
 window.addEventListener('hashchange', () => { route(); refreshBadge(); });
-window.addEventListener('munshi-lang', route);
+window.addEventListener('munshi-lang', () => { route(); if (shell.profile && shell.profile.ui_lang !== getLang()) saveProfile({ ui_lang: getLang() }).catch(() => {}); });  // call notes are translated into this language
 window.addEventListener('munshi-online', () => { drawBanner(); if (isOnline()) route(); });
 window.addEventListener('munshi-badge', () => drawNav(parse().name));
 window.addEventListener('munshi-changed', refreshBadge);

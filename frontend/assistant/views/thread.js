@@ -9,7 +9,7 @@ import { makeListener, canRecord } from '../listener.js';
 const FILE = (blob) => `speech.${blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm'}`;
 
 export async function render(root, { param }) {
-  let data = await A(`/thread?phone=${encodeURIComponent(param)}`);
+  let data = await A(`/thread?phone=${encodeURIComponent(param)}&lang=${getLang()}`);
   let text = ''; let micOn = false; let recording = false; let alive = true; let sending = false;
   const listener = makeListener();
   const body = h('div', { class: 'th-body', id: 'thbody' });
@@ -47,7 +47,7 @@ export async function render(root, { param }) {
       h('button', { class: 'link', style: 'min-height:44px;padding:0 4px 0 8px;font-size:14px', onclick: markDone }, icon('check', 20), t(['हो गया', 'Done']))) : null);
     mount(chipsEl, pending && data.chips.length ? h('div', { class: 'chips' }, ...data.chips.map((c) => h('button', { class: 'rchip', onclick: () => setText((text ? text + ' ' : '') + c.text) }, '+ ' + c.label))) : null);
   }
-  async function reload() { data = await A(`/thread?phone=${encodeURIComponent(param)}`); if (!alive) return; drawBody(); drawComposerParts(); window.dispatchEvent(new Event('munshi-changed')); }
+  async function reload() { data = await A(`/thread?phone=${encodeURIComponent(param)}&lang=${getLang()}`); if (!alive) return; drawBody(); drawComposerParts(); window.dispatchEvent(new Event('munshi-changed')); }
   async function markDone() {
     try { for (const id of data.pending) await A(`/calls/${id}`, { method: 'PUT', body: { reviewed: true } }); toast(t(['हो गया में डाला', 'Marked done']), { high: true }); await reload(); } catch (e) { toast(e.message, { bad: true, high: true }); }
   }

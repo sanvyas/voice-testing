@@ -28,7 +28,7 @@ def test_the_structured_summary_is_saved_with_the_call(client, ai):
     d = client.get(f"{API}/calls/{cid}").json()
     assert d["ask"] == "Rate and delivery time" and d["order"]["mode"] == "delivery" and d["order"]["items"][0]["board_name"] == "Atta"
     assert d["keep"] == ["Best time to call: before 9 pm"] and [r["label"] for r in d["replies"]] == ["Call tonight", "Reply"]
-    prompt = ai.calls[-1][0]["content"]
+    prompt = [c[0]["content"] for c in ai.calls if "BOARD ITEMS" in c[0]["content"]][-1]  # the call-notes prompt (a translation call may follow it)
     assert "BOARD ITEMS: Atta" in prompt and '"ask"' in prompt and "never confirms an order" in prompt
 
 
@@ -218,3 +218,95 @@ def test_opening_and_closing_times_become_the_hours_the_ai_states(client):
     assert p["hours"] == "8:00 to 21:00" and p["confirmed"]["hours"]
     assert profile(client, mode="board", open="9:00", close="20:00")["hours"] == "9:00 to 20:00"
     assert profile(client, mode="board", languages=["hi", "hing"])["languages"] == ["hi", "hing"]
+
+
+# ---- the owner's language -----------------------------------------------------------------------
+
+class Translator:
+    """Stands in for the model: translates by looking each string up in a table, counts the calls."""
+    TABLE = {"Sunil wants 10 kg atta and 5 kg sugar, delivery tomorrow morning.": "सुनील को 10 किलो आटा और 5 किलो चीनी चाहिए, कल सुबह डिलीवरी।", "Rate and delivery time": "रेट और डिलीवरी का समय",
+             "atta": "आटा", "sugar": "चीनी", "tomorrow morning": "कल सुबह", "Call Ravi back about 20 packets of rice": "20 पैकेट चावल के बारे में रवि को फ़ोन करें", "Confirm delivery for Friday": "शुक्रवार की डिलीवरी पक्की करें",
+             "Best time to call: before 9 pm": "फ़ोन करने का अच्छा समय: रात 9 बजे से पहले", "namaste": "नमस्ते"}
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, messages, **kw):
+        self.calls += 1
+        asked = json.loads(messages[1]["content"])
+        return llm.LLMResult(json.dumps([self.TABLE.get(x, x) for x in asked], ensure_ascii=False), "Fake", "fake", 3, {})
+
+
+def finished_call(client, ai, monkeypatch):
+    profile(client, mode="board", ui_lang="en")  # owner reads English at the moment of the call, so nothing is translated yet
+    cid = make_call(client, ai, "98765 43210", RICH)
+    fake = Translator()
+    monkeypatch.setattr(llm, "chat", fake)
+    return cid, fake
+
+
+def test_hindi_screens_show_call_notes_in_hindi_and_translate_only_once(client, ai, monkeypatch):
+    cid, fake = finished_call(client, ai, monkeypatch)
+    d = client.get(f"{API}/calls/{cid}", params={"lang": "hi"}).json()
+    assert d["summary"].startswith("सुनील को 10 किलो आटा") and d["ask"] == "रेट और डिलीवरी का समय" and d["keep"] == ["फ़ोन करने का अच्छा समय: रात 9 बजे से पहले"]
+    assert [i["name"] for i in d["order"]["items"]] == ["आटा", "चीनी"] and d["order"]["when"] == "कल सुबह" and d["action_items"][0]["text"].startswith("20 पैकेट चावल")
+    assert d["order"]["address"] == "14 Gandhi Road" and d["order"]["items"][0]["qty_n"] == 10  # names, numbers and the saved original stay as they were
+    n = fake.calls
+    client.get(f"{API}/calls/{cid}", params={"lang": "hi"})
+    rows = client.get(f"{API}/people", params={"tab": "need", "lang": "hi"}).json()["rows"]
+    assert rows[0]["summary"].startswith("सुनील को") and rows[0]["ask"] == "रेट और डिलीवरी का समय" and fake.calls == n  # kept with the call: no second model call
+    t = client.get(f"{API}/thread", params={"phone": "+919876543210", "lang": "hi"}).json()
+    call = [i for i in t["items"] if i["type"] == "call"][0]
+    assert call["summary"].startswith("सुनील को") and call["points"][0].startswith("20 पैकेट चावल") and t["ask"] == "रेट और डिलीवरी का समय" and fake.calls == n
+    english = client.get(f"{API}/calls/{cid}").json()  # without a language the saved English is returned unchanged
+    assert english["summary"].startswith("Sunil wants")
+    assert client.get(f"{API}/calls/{cid}", params={"lang": "fr"}).status_code == 422
+
+
+def test_the_conversation_is_translated_only_when_asked_for(client, ai, monkeypatch):
+    cid, fake = finished_call(client, ai, monkeypatch)
+    plain = client.get(f"{API}/calls/{cid}", params={"lang": "hi"}).json()
+    assert plain["turns"][1]["content"] == "namaste"
+    full = client.get(f"{API}/calls/{cid}", params={"lang": "hi", "turns": "true"}).json()
+    assert full["turns"][1]["content"] == "नमस्ते"
+    assert client.get(f"{API}/calls/{cid}").json()["turns"][1]["content"] == "namaste"
+
+
+def test_a_failed_translation_shows_the_original_and_never_breaks_the_screen(client, ai, monkeypatch):
+    profile(client, mode="board", ui_lang="en")
+    cid = make_call(client, ai, "98765 43210", RICH)
+
+    async def broken(messages, **kw):
+        raise llm.LLMError("All configured providers failed. Fake: boom")
+    monkeypatch.setattr(llm, "chat", broken)
+    d = client.get(f"{API}/calls/{cid}", params={"lang": "hi"})
+    assert d.status_code == 200 and d.json()["summary"].startswith("Sunil wants")
+    assert client.get(f"{API}/people", params={"tab": "need", "lang": "hi"}).status_code == 200
+
+
+def test_text_already_in_the_right_language_is_not_sent_to_the_model(client, ai, monkeypatch):
+    profile(client, mode="board", ui_lang="en")
+    cid = make_call(client, ai, "98765 43210", {**RICH, "summary": "सुनील को आटा चाहिए", "ask": "रेट बताना", "keep": [], "order": {"items": [], "mode": "", "when": "", "address": ""}, "action_items": ["रवि को फ़ोन करें"]})
+    fake = Translator()
+    monkeypatch.setattr(llm, "chat", fake)
+    d = client.get(f"{API}/calls/{cid}", params={"lang": "hi"}).json()
+    assert d["summary"] == "सुनील को आटा चाहिए" and fake.calls == 0
+
+
+def test_the_owners_language_is_saved_and_notes_are_ready_when_the_call_ends(client, ai, monkeypatch):
+    profile(client, mode="board")  # ui_lang defaults to Hindi
+    assert client.get(f"{API}/profile").json()["ui_lang"] == "hi"
+    fake = Translator()
+    cid = client.post(f"{API}/calls", json={"caller_number": "98765 43210"}).json()["call"]["id"]
+    client.post(f"{API}/calls/{cid}/turns", json={"content": "namaste"})
+    ai.summary_raw = json.dumps(RICH)
+    original = llm.chat
+
+    async def both(messages, **kw):  # the receptionist and the call notes use the app's fake; translations use the table
+        return await (fake(messages, **kw) if messages[0]["content"].startswith("You translate") else original(messages, **kw))
+    monkeypatch.setattr(llm, "chat", both)
+    client.post(f"{API}/calls/{cid}/end")
+    assert fake.calls == 1  # made at the end of the call, in the owner's language
+    n = fake.calls
+    assert client.get(f"{API}/calls/{cid}", params={"lang": "hi"}).json()["ask"] == "रेट और डिलीवरी का समय" and fake.calls == n
+    assert client.put(f"{API}/profile", json={"business_name": "X", "owner_name": "Y", "ui_lang": "fr"}).status_code == 422
