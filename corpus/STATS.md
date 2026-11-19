@@ -5,8 +5,8 @@ Conversations: **339**. Munshi turns: 1043, average 14.2 words, longest 30.
 ## By label (what the owner sees)
 
 - action: 185
-- fyi: 70
-- ignore: 84
+- fyi: 66
+- ignore: 88
 
 ## By language
 

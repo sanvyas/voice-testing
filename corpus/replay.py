@@ -119,7 +119,7 @@ def main():
         for n, c in enumerate(convs):
             turns, ended, detail = play(api, c, f"+91 96000 8{n:04d}", a.pause)
             clean_turns = [dict(t, text=_strip(t["text"], api.names)) for t in turns]
-            probe = dict(c, turns=clean_turns, must=[], end=ended)
+            probe = dict(c, turns=clean_turns, must=[], end=ended, lang="hi" if c["lang"] in ("hi", "hing") else "en")  # Hinglish callers are answered in Devanagari on purpose, so the voice reads it right
             issues = [i for i in validate(probe) if not i.startswith("turn 0") and "unfilled slot" not in i]
             if not any(t["role"] == "caller" for t in turns[1:]):
                 issues.append("no turns played")
