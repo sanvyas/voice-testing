@@ -27,12 +27,15 @@ export async function signOut() {
 export function showLogin() {
   return new Promise(async (resolve) => {
     let cfg = { demo: null }; try { cfg = await (await fetch(API + '/config')).json(); } catch { /* no demo hint */ }
-    const state = { step: 'phone', phone: '', masked: '', error: '', busy: false, wait: 0, agree: false };
+    const state = { step: 'phone', phone: '', masked: '', error: '', busy: false, wait: 0, agree: false, code: '', shake: false };
     const root = h('div', { class: 'login', role: 'dialog', 'aria-modal': 'true', 'aria-label': t(['साइन इन', 'Sign in']) });
     document.body.append(root);
     let timer = null;
     const digits = (v) => v.replace(/\D/g, '').slice(-10);
-    const startWait = (s) => { state.wait = s; clearInterval(timer); timer = setInterval(() => { state.wait -= 1; if (state.wait <= 0) { clearInterval(timer); state.wait = 0; } if (state.step === 'code') draw(); }, 1000); };
+    let resendBtn = null;
+    const resendLabel = () => (state.wait > 0 ? t([`दोबारा कोड (${state.wait}s)`, `Resend code (${state.wait}s)`]) : t(['दोबारा कोड भेजें', 'Resend code']));
+    const paintResend = () => { if (resendBtn) { resendBtn.textContent = resendLabel(); resendBtn.disabled = state.wait > 0 || state.busy; } };  // only this button changes each second: a redraw would erase the digits being typed
+    const startWait = (s) => { state.wait = s; clearInterval(timer); timer = setInterval(() => { state.wait = Math.max(0, state.wait - 1); if (state.wait === 0) clearInterval(timer); paintResend(); }, 1000); };
 
     async function sendCode() {
       const n = digits(state.phone);
@@ -50,8 +53,8 @@ export function showLogin() {
         setBusinessKey(r.token); clearInterval(timer); root.remove(); resolve(r);
         if (r.is_new) location.hash = '#/start';
         return;
-      } catch (e) { state.error = e.message; }
-      state.busy = false; draw();
+      } catch (e) { state.error = e.message; state.code = ''; state.shake = true; }
+      state.busy = false; draw(); state.shake = false;
     }
 
     function draw() {
@@ -68,12 +71,22 @@ export function showLogin() {
           cfg.demo ? h('button', { class: 'link demo', onclick: () => { state.phone = cfg.demo.phone.slice(-10); state.agree = true; draw(); } }, t(['डेमो दुकान आज़माएँ (सैंपल नंबर)', 'Try the demo shop (sample number)'])) : null];
         queueMicrotask(() => phone.focus());
       } else {
-        const code = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, placeholder: '••••••', 'aria-label': t(['6 अंकों का कोड', '6-digit code']), class: 'otp', oninput: (e) => { e.target.value = e.target.value.replace(/\D/g, ''); if (e.target.value.length === 6 && !state.busy) verify(e.target.value); }, onkeydown: (e) => { if (e.key === 'Enter' && e.target.value.length >= 4) verify(e.target.value); } });
-        body = [h('h1', {}, t(['कोड डालें', 'Enter the code'])), h('p', {}, state.demo ? t([`डेमो नंबर है, इसलिए SMS नहीं जाएगा। कोड: ${cfg.demo ? cfg.demo.code : ''}`, `This is the demo number, so no SMS is sent. Code: ${cfg.demo ? cfg.demo.code : ''}`]) : t([`${state.masked} पर कोड भेजा गया`, `Code sent to ${state.masked}`])),
-          code, err, h('button', { class: 'big', disabled: state.busy, onclick: () => code.value.length >= 4 && verify(code.value) }, state.busy ? t(['जाँच रहे हैं…', 'Checking…']) : t(['साइन इन', 'Sign in'])),
-          h('div', { class: 'login-row' }, h('button', { class: 'link', onclick: () => { state.step = 'phone'; state.error = ''; draw(); } }, t(['नंबर बदलें', 'Change number'])),
-            h('button', { class: 'link', disabled: state.wait > 0 || state.busy, onclick: sendCode }, state.wait > 0 ? t([`दोबारा कोड (${state.wait}s)`, `Resend code (${state.wait}s)`]) : t(['दोबारा कोड भेजें', 'Resend code'])))];
-        queueMicrotask(() => code.focus());
+        // Six boxes drawn from one real (invisible) field on top: SMS autofill, paste, backspace and the number keyboard all keep working.
+        const boxes = Array.from({ length: 6 }, () => h('div', { class: 'otp-box' }));
+        const field = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, pattern: '[0-9]*', class: 'otp-input', value: state.code, 'aria-label': t(['6 अंकों का कोड', '6-digit code']),
+          oninput: (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6); state.code = e.target.value; state.error = ''; paintBoxes(); if (state.code.length === 6 && !state.busy) verify(state.code); },
+          onfocus: () => { focused = true; paintBoxes(); }, onblur: () => { focused = false; paintBoxes(); }, onkeydown: (e) => { if (e.key === 'Enter' && state.code.length >= 4) verify(state.code); } });
+        let focused = true;
+        const paintBoxes = () => boxes.forEach((b, i) => { b.textContent = state.code[i] || ''; b.className = 'otp-box' + (state.code[i] ? ' full' : '') + (focused && i === Math.min(state.code.length, 5) && !state.busy ? ' on' : '') + (state.error ? ' bad' : ''); });
+        const code = field;
+        const wrap = h('div', { class: 'otp-wrap' + (state.shake ? ' shake' : ''), onclick: () => field.focus() }, h('div', { class: 'otp-row' }, ...boxes), field);
+        paintBoxes();
+        const demoFill = state.demo && cfg.demo ? h('button', { class: 'link', onclick: () => { state.code = cfg.demo.code; field.value = state.code; paintBoxes(); verify(state.code); } }, t([`डेमो कोड भरें (${cfg.demo.code})`, `Fill the demo code (${cfg.demo.code})`])) : null;
+        body = [h('h1', {}, t(['कोड डालें', 'Enter the code'])), h('p', {}, state.demo ? t(['डेमो नंबर है, इसलिए SMS नहीं जाएगा।', 'This is the demo number, so no SMS is sent.']) : t([`${state.masked} पर 6 अंकों का कोड भेजा गया`, `A 6-digit code was sent to ${state.masked}`])),
+          wrap, err, demoFill, h('button', { class: 'big', disabled: state.busy || state.code.length < 4, onclick: () => state.code.length >= 4 && verify(state.code) }, state.busy ? t(['जाँच रहे हैं…', 'Checking…']) : t(['साइन इन', 'Sign in'])),
+          h('div', { class: 'login-row' }, h('button', { class: 'link', onclick: () => { state.step = 'phone'; state.error = ''; state.code = ''; clearInterval(timer); draw(); } }, t(['नंबर बदलें', 'Change number'])),
+            (resendBtn = h('button', { class: 'link', disabled: state.wait > 0 || state.busy, onclick: () => { state.code = ''; sendCode(); } }, resendLabel())))];
+        queueMicrotask(() => { field.focus(); });
       }
       mount(root, h('div', { class: 'login-card' }, h('div', { class: 'login-top' }, h('div', { class: 'login-brand' }, Logo(40), h('b', {}, 'Munshi')), lang),
         h('div', { class: 'login-body' }, ...body), h('div', { class: 'login-foot' }, t(['आपका AI सहायक, जब आप कॉल न उठा पाएँ', 'Your AI assistant for the calls you cannot take']))));

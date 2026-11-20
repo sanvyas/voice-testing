@@ -211,9 +211,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .login-body h1 { margin: 0; font: 700 30px/1.2 'Space Grotesk', 'Noto Sans Devanagari'; } .login-body p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.5; }
 .login .phone { display: flex; align-items: center; gap: 0; border: 2px solid var(--ring); border-radius: 16px; background: #fff; min-height: 60px; overflow: hidden; }
 .login .phone span { padding: 0 14px; font: 600 19px 'Space Grotesk'; color: var(--muted); border-right: 1.5px solid var(--line2); height: 60px; display: flex; align-items: center; }
-.login .phone input, .login input.otp { flex: 1; min-width: 0; border: 0; outline: 0; background: none; padding: 0 14px; font: 600 22px 'Space Grotesk'; letter-spacing: .04em; min-height: 58px; }
-.login .phone:focus-within, .login input.otp:focus { border-color: var(--green); }
-.login input.otp { border: 2px solid var(--ring); border-radius: 16px; background: #fff; text-align: center; letter-spacing: .5em; font-size: 28px; }
+.login .phone input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; padding: 0 14px; font: 600 22px 'Space Grotesk'; letter-spacing: .04em; min-height: 58px; }
+.login .phone:focus-within { border-color: var(--green); }
 .login .agree { display: flex; gap: 12px; align-items: flex-start; font-size: 14.5px; line-height: 1.5; color: #3a4a45; cursor: pointer; }
 .login .agree input { width: 24px; height: 24px; flex: none; margin-top: 1px; accent-color: var(--green); } .login .agree a { color: var(--green); font-weight: 700; }
 .login .big { min-height: 58px; border-radius: 16px; background: var(--green); color: #fff; border: 0; font: 700 17px inherit; cursor: pointer; } .login .big:disabled { opacity: .6; }
@@ -226,3 +225,14 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .start { display: flex; flex-direction: column; gap: 12px; padding-bottom: 120px; } .stepno { font-size: 13px; font-weight: 700; color: var(--green); letter-spacing: .04em; text-transform: uppercase; }
 .start .chips { display: flex; flex-wrap: wrap; gap: 8px; } .start .chips .rchip.on { background: var(--green); color: #fff; } .start .note { margin: 4px 2px; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
 .start-bar { display: flex; flex-direction: column; gap: 4px; } .start-bar .skip { justify-content: center; min-height: 44px; }
+
+/* the six-box code entry */
+.otp-wrap { position: relative; } .otp-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.otp-box { height: 74px; border: 2px solid var(--ring); border-radius: 16px; background: #fff; display: grid; place-items: center; font: 700 34px 'Space Grotesk'; color: var(--ink, #0F1F1B); transition: border-color .12s, box-shadow .12s; }
+.otp-box.full { border-color: #8bbfae; } .otp-box.on { border-color: var(--green); box-shadow: 0 0 0 4px rgba(11,122,91,.16); } .otp-box.on:empty::after { content: ''; width: 2px; height: 34px; background: var(--green); animation: blink 1s steps(1) infinite; }
+.otp-box.bad { border-color: var(--warn-d); }
+.otp-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; font-size: 16px; border: 0; background: none; caret-color: transparent; }
+.otp-wrap.shake { animation: shake .35s; }
+@keyframes blink { 50% { opacity: 0; } } @keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+@media (prefers-reduced-motion: reduce) { .otp-wrap.shake, .otp-box.on:empty::after { animation: none; } }
+.login-card { min-height: 100dvh; }
