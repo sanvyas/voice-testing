@@ -13,7 +13,7 @@ import llm
 from . import board as board_mod
 
 GRAPH = "https://graph.facebook.com"
-TEMPLATE_BODY = "Hi, this is {{1}}. We missed your call. {{2}} Reply here with what you need and we will get back to you."
+TEMPLATE_BODY = "Hi, this is the AI assistant of {{1}}. Your call is noted. {{2}} Reply here if you want to add anything and the owner will get back to you."
 
 
 def _one_line(text: str, limit: int) -> str:
