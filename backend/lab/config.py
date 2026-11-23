@@ -48,7 +48,7 @@ def normalize_database_url(url: str) -> str:
 
 
 def load_settings() -> Settings:
-    env = os.getenv("APP_ENV", "development").strip().lower()
+    env = os.getenv("APP_ENV", "production").strip().lower()  # secure by default: local development must say APP_ENV=development
     default_db = f"sqlite:///{BACKEND_DIR / 'data' / 'lab.db'}"
     tokens = tuple(t.strip() for t in os.getenv("LAB_API_TOKENS", "").split(",") if t.strip())
     return Settings(
@@ -76,6 +76,11 @@ def validate_for_startup(settings: Settings) -> None:
         raise RuntimeError(
             "APP_ENV=production requires LAB_API_TOKENS (comma-separated secrets) to protect the testing lab, "
             "or LAB_OPEN_ACCESS=true to run it without sign-in on purpose."
+        )
+    if settings.is_production and settings.open_access and os.getenv("LAB_ALLOW_OPEN_ACCESS_IN_PRODUCTION", "").strip().lower() != "yes-i-know":
+        raise RuntimeError(
+            "LAB_OPEN_ACCESS=true would put every admin page, every business's calls and a full database backup on the open internet. "
+            "Set LAB_API_TOKENS instead. (Only if you truly mean it: LAB_ALLOW_OPEN_ACCESS_IN_PRODUCTION=yes-i-know.)"
         )
     if settings.database_schema and not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", settings.database_schema):
         raise RuntimeError("DATABASE_SCHEMA must be a simple lowercase identifier such as voice_lab.")

@@ -57,7 +57,8 @@ def mask(phone: str) -> str:
 
 
 def _ip(request: Request) -> str:
-    return (request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else ""))[:45]
+    from lab.ratelimit import client_ip
+    return client_ip(request)  # never the first X-Forwarded-For hop: the visitor chooses that one
 
 
 # --- codes ----------------------------------------------------------------------------

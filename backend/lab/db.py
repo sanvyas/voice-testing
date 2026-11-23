@@ -1,6 +1,7 @@
 """Engine/session management and migrations."""
 from __future__ import annotations
 
+import re
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -36,11 +37,13 @@ def make_engine(url: str, schema: str | None = None) -> Engine:
         kwargs.update(pool_size=3, max_overflow=2, pool_recycle=300)
     engine = create_engine(url, **kwargs)
     if schema and not url.startswith("sqlite"):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):  # it is spliced into SET search_path, so it must be a plain identifier
+            raise RuntimeError("The database schema name may only contain letters, digits and underscores.")
 
         @event.listens_for(engine, "connect")
         def _schema(dbapi_conn, _record):  # every connection works only inside our own schema
             cur = dbapi_conn.cursor()
-            cur.execute(f'SET search_path TO "{schema}"')
+            cur.execute(f'SET search_path TO "{schema}"')  # sql-ok: schema checked against a plain-identifier pattern above
             cur.close()
             dbapi_conn.commit()
 

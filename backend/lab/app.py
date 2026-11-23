@@ -114,12 +114,21 @@ def install(app: FastAPI) -> None:
     async def _service_error(_request: Request, exc: ServiceError):
         return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
+    MAX_BODY = 8 * 1024 * 1024  # the largest thing we accept is a 6 MB photo
+
     @app.middleware("http")
     async def _headers(request: Request, call_next):
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_BODY:
+            return JSONResponse({"detail": "That request is too large."}, status_code=413)
         response = await call_next(request)
         path = request.url.path
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()")
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         if path.startswith(("/api/lab", "/api/assistant", "/telephony")):
             response.headers["Cache-Control"] = "no-store"
         if path.startswith(("/lab", "/assistant", "/portal")):

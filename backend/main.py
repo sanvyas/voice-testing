@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,11 @@ import llm  # noqa: E402  (after load_dotenv so provider settings are visible)
 from lab import app as lab_app  # noqa: E402
 from prompts import SYSTEM_PROMPT, build_messages  # noqa: E402
 
-app = FastAPI(title="A Space to Talk", version="0.3.0", lifespan=lab_app.lab_lifespan)
+from lab.config import load_settings as _load_settings  # noqa: E402
+
+_PROD = _load_settings().is_production
+# The interactive docs list every route and let anyone try them: only for local development.
+app = FastAPI(title="A Space to Talk", version="0.3.0", lifespan=lab_app.lab_lifespan, docs_url=None if _PROD else "/docs", redoc_url=None if _PROD else "/redoc", openapi_url=None if _PROD else "/openapi.json")
 lab_app.install(app)  # testing lab: API at /api/lab, UI at /lab
 
 class Message(BaseModel):
@@ -122,7 +126,17 @@ async def ready():
     return {"status": "ready"}
 
 
-@app.post("/api/chat")
+async def chat_guard(request: Request) -> None:
+    """The open demo chat spends AI money for anyone who finds it. It needs a login, unless LAB_PUBLIC_CHAT is switched on (then: 12 a minute per visitor)."""
+    if os.getenv("LAB_PUBLIC_CHAT", "").strip().lower() in {"1", "true", "yes"}:
+        from lab import ratelimit
+        ratelimit.hit(f"chat:{ratelimit.client_ip(request)}", 12)
+        return
+    from assistant.access import any_member
+    await any_member(request)
+
+
+@app.post("/api/chat", dependencies=[Depends(chat_guard)])
 async def chat(request: ChatRequest):
     history = request.messages  # the whole conversation: the model must remember what was said at the start
     if history[-1].role != "user":

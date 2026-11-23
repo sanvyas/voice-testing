@@ -7,13 +7,15 @@ from collections import defaultdict, deque
 
 from fastapi import HTTPException, Request
 
+from . import ratelimit
+
 _FAILURES: dict[str, deque] = defaultdict(deque)
 WINDOW_S = 60
 MAX_FAILURES = 10
 
 
 def _client(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    return ratelimit.client_ip(request)  # behind the proxy the direct peer is the proxy itself, shared by everyone
 
 
 def reset_throttle() -> None:
@@ -22,8 +24,12 @@ def reset_throttle() -> None:
 
 def require_auth(request: Request) -> None:
     settings = request.app.state.lab_settings
-    if settings.open_access or not settings.api_tokens:  # sign-in switched off on purpose (LAB_OPEN_ACCESS) or local development
+    if settings.open_access:  # sign-in switched off on purpose (LAB_OPEN_ACCESS)
         return
+    if not settings.api_tokens:
+        if settings.is_production:  # fail closed: a missing token must never mean "no login"
+            raise HTTPException(401, "Sign-in is required.", headers={"WWW-Authenticate": "Bearer"})
+        return  # local development without tokens
     who = _client(request)
     now = time.monotonic()
     recent = _FAILURES[who]

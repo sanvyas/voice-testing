@@ -214,12 +214,37 @@ async def _answer(request: Request, uuid: str, caller: str, called: str):
     return xml(await speak_xml(first, lang, request, call_id), record_xml(request, call_id))
 
 
-async def _download(url: str) -> bytes:
-    if not url.startswith("https://"):
+def _refuse_private(url: str) -> None:
+    """Server-side request forgery guard: only public https addresses. A name that resolves to a private, loopback or link-local address is refused."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    p = urlparse(url)
+    if p.scheme != "https" or not p.hostname:
         raise ValueError("recording URL is not https")
-    response = await llm.http_client().get(url, timeout=20, follow_redirects=True)
-    response.raise_for_status()
-    return response.content
+    host = p.hostname
+    try:
+        infos = socket.getaddrinfo(host, p.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return  # cannot resolve: the download itself will fail
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            raise ValueError("recording URL points to a private address")
+
+
+async def _download(url: str) -> bytes:
+    for _ in range(4):  # follow a few redirects by hand, checking every hop
+        await asyncio.to_thread(_refuse_private, url)
+        response = await llm.http_client().get(url, timeout=20, follow_redirects=False)
+        if response.status_code in (301, 302, 303, 307, 308) and response.headers.get("location"):
+            from urllib.parse import urljoin
+            url = urljoin(url, response.headers["location"])
+            continue
+        response.raise_for_status()
+        return response.content
+    raise ValueError("too many redirects")
 
 
 _FORGETTING: set = set()  # keeps background deletions alive until they finish

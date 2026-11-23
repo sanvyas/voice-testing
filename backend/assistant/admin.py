@@ -33,7 +33,7 @@ def _base(request: Request) -> str:
 
 
 def _link(request: Request, key: str) -> str:
-    return f"{_base(request)}/assistant/?k={key}"
+    return f"{_base(request)}/assistant/#k={key}"  # after the #, so it never reaches server logs
 
 
 def _profile(b: Business) -> dict:

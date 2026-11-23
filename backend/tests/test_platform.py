@@ -30,7 +30,7 @@ def new_business(client, name, owner_name, number=""):
     r = admin(client, "POST", "/admin/businesses", json={"name": name, "owner_name": owner_name, "phone_number": number})
     assert r.status_code == 201, r.text
     d = r.json()
-    return d["id"], d["link"].split("?k=")[1]
+    return d["id"], d["link"].split("#k=")[1]
 
 
 def test_each_owner_sees_only_their_own_business(platform):
@@ -81,7 +81,7 @@ def test_owners_cannot_reach_platform_settings_or_other_businesses(platform):
 def test_a_new_link_replaces_the_old_one_and_a_deleted_business_takes_its_data_along(platform):
     biz, key = new_business(platform, "Sharma Traders", "Ramesh")
     assert admin(platform, "GET", f"/admin/businesses/{biz}/link").json()["link"].endswith(key)  # the admin can show it again
-    new = admin(platform, "POST", f"/admin/businesses/{biz}/link").json()["link"].split("?k=")[1]
+    new = admin(platform, "POST", f"/admin/businesses/{biz}/link").json()["link"].split("#k=")[1]
     assert new != key and owner(platform, key, "GET", "/profile").status_code == 401 and owner(platform, new, "GET", "/profile").status_code == 200
     owner(platform, new, "POST", "/board", json={"name": "Rice", "price": "40"})
     assert admin(platform, "POST", f"/admin/businesses/{biz}/delete", json={"confirm_name": "wrong"}).status_code == 422

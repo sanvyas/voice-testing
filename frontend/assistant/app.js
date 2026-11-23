@@ -5,8 +5,10 @@ import { icon, isOnline, setOnline } from './kit.js';
 import { shell, load, refreshBadge, saveProfile } from './shell.js';
 
 // A business opens its private link (…/assistant/?k=KEY) once; the key is kept on this device and removed from the address bar.
-const linkKey = new URLSearchParams(location.search).get('k');
-if (linkKey) { setBusinessKey(linkKey); history.replaceState(null, '', location.pathname + location.hash); }
+// New links carry the key after '#' (browsers never send that part to the server, so it stays out of access logs); older links used '?k='.
+const hashKey = (location.hash.match(/(?:^#|&)k=([^&]+)/) || [])[1];
+const linkKey = hashKey || new URLSearchParams(location.search).get('k');
+if (linkKey) { setBusinessKey(decodeURIComponent(linkKey)); history.replaceState(null, '', location.pathname + (hashKey ? '' : location.hash)); }
 
 // No sign-in yet (or it has ended): ask for the phone number instead of an admin token.
 setUnauthorizedHandler(() => import('./views/login.js').then((m) => m.showLogin()));

@@ -54,12 +54,35 @@ def test_open_access_removes_the_lab_sign_in_but_not_the_app_api_keys(env, fake)
     from fastapi.testclient import TestClient
     import main
     env.setenv("APP_ENV", "production")
-    env.setenv("LAB_OPEN_ACCESS", "true")                      # no tokens at all: allowed because it was asked for
+    env.setenv("LAB_OPEN_ACCESS", "true")                      # no tokens at all: allowed only with the explicit override
+    env.setenv("LAB_ALLOW_OPEN_ACCESS_IN_PRODUCTION", "yes-i-know")
     with TestClient(main.app) as c:
         assert c.get(f"{API}/prompts").status_code == 200       # no token needed
         cfg = c.get(f"{API}/config").json()
         assert cfg["open_access"] is True and cfg["auth_required"] is False
         assert c.post(f"{V1}/sessions", json={}).status_code == 401   # the mobile API still needs its own key
+
+
+def test_a_production_server_refuses_to_start_wide_open(env, fake):
+    """The mistake that left a live service open: LAB_OPEN_ACCESS left on in production. Now the server will not start that way."""
+    from fastapi.testclient import TestClient
+    import main
+    env.setenv("APP_ENV", "production")
+    env.setenv("LAB_OPEN_ACCESS", "true")
+    with pytest.raises(RuntimeError, match="open internet"):
+        with TestClient(main.app):
+            pass
+
+
+def test_a_server_with_no_environment_set_is_closed_not_open(env, fake):
+    """Forgetting APP_ENV must not mean "no login": the default is production, which needs a token."""
+    from fastapi.testclient import TestClient
+    import main
+    env.delenv("APP_ENV")
+    env.delenv("LAB_API_TOKENS", raising=False)
+    with pytest.raises(RuntimeError, match="LAB_API_TOKENS"):
+        with TestClient(main.app):
+            pass
 
 
 def test_open_access_wins_even_if_a_token_is_still_configured_and_turning_it_off_restores_sign_in(env, fake):

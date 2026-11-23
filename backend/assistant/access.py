@@ -57,6 +57,17 @@ async def scope(request: Request) -> None:
     tenant.activate(biz)
 
 
+def throttle(name: str, limit: int, window: int = 60):
+    """A route dependency: at most `limit` calls a minute per business (or per visitor address when no business is selected).
+    Put it on endpoints that spend money (AI, voice, photo reading) so one stolen link or a script cannot run up the bill."""
+    from lab import ratelimit
+
+    async def dep(request: Request) -> None:
+        who = tenant.active_id() or ratelimit.client_ip(request)
+        ratelimit.hit(f"{name}:{who}", limit, window)
+    return dep
+
+
 async def admin_only(request: Request) -> None:
     if getattr(request.state, "role", "") != "admin":
         raise HTTPException(403, "Only the platform admin can do this.")

@@ -18,7 +18,7 @@ from lab.schemas import Strict
 from lab.service import ServiceError, get_or_404, iso
 
 from . import board, config, costs, integrations, lexicon, people, prompts, service, tenant, translate, vision, voices, whatsapp
-from .access import admin_only, scope
+from .access import admin_only, scope, throttle
 
 router = APIRouter(dependencies=[Depends(scope)])
 ADMIN = [Depends(admin_only)]  # platform-level settings an owner never sees
@@ -146,7 +146,7 @@ class UnderstandIn(Strict):
     text: str = Field(min_length=1, max_length=600)
 
 
-@router.post("/shop/understand")
+@router.post("/shop/understand", dependencies=[Depends(throttle("understand", 20))])
 async def shop_understand(body: UnderstandIn):
     return await people.understand(body.text)
 
@@ -216,7 +216,7 @@ class VoiceSampleIn(Strict):
 SAMPLES = {"hi-IN": "नमस्ते, मैं मुंशी हूँ, एक ए आई सहायक। बताइए, क्या चाहिए?", "en-IN": "Namaste, this is Munshi, an AI assistant. How can I help?"}
 
 
-@router.post("/voices/sample")
+@router.post("/voices/sample", dependencies=[Depends(throttle("sample", 20))])
 async def voice_sample(body: VoiceSampleIn, session: Session = Depends(get_session)):
     """A short clip in a voice (a sample, or the practice call's replies). If no server voice is set up the app uses the phone's own voice."""
     engine = tts.active()
@@ -375,7 +375,7 @@ class TermIn(Strict):
     term: str = Field(min_length=1, max_length=80)
 
 
-@router.post("/board/photo")
+@router.post("/board/photo", dependencies=[Depends(throttle("photo", 10))])
 async def board_from_photo(file: UploadFile = File(...)):
     """Read a photo of a price list, shelf, rate board or bill. Returns what it found for the owner to review. Nothing is changed yet."""
     data = await file.read(vision.MAX_BYTES + 1)
@@ -420,7 +420,7 @@ def import_board(body: ImportIn, session: Session = Depends(get_session)):
     return r
 
 
-@router.post("/board/say")
+@router.post("/board/say", dependencies=[Depends(throttle("say", 30))])
 def say_to_board(body: SayIn, session: Session = Depends(get_session)):
     """"kaju katli khatam" -> marks it sold out. Anything it cannot place is returned, not guessed."""
     r = board.say(session, body.text)
@@ -501,7 +501,7 @@ async def get_call(call_id: str, lang: str | None = LANG, turns: bool = Query(Fa
     return await translate.localize_detail(call_id, detail, lang, turns) if lang else detail
 
 
-@router.post("/calls", status_code=201)
+@router.post("/calls", status_code=201, dependencies=[Depends(throttle("calls", 30))])
 async def start_call(body: StartCall, request: Request):
     """Start a practice call in the browser. The person typing or speaking plays the caller."""
     profile = await run_db(service.get_profile)
@@ -520,7 +520,7 @@ async def start_call(body: StartCall, request: Request):
     return await run_db(work)
 
 
-@router.post("/calls/{call_id}/turns")
+@router.post("/calls/{call_id}/turns", dependencies=[Depends(throttle("turns", 60))])
 async def call_turn(call_id: str, body: TurnIn):
     return await service.run_turn(call_id, body.content, body.audio_seconds)
 
