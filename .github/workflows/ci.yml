@@ -1,5 +1,7 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read   # the CI token can read the code and nothing else
 jobs:
   test:
     runs-on: ubuntu-latest

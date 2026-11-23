@@ -16,7 +16,7 @@ Munshi answers the calls a shop owner, wholesaler or small factory misses. It ta
 
 **Prompts are templates with `{{variables}}`** (`{{business_name}}`, `{{owner_name}}`, `{{about}}`, `{{address}}`, `{{hours}}`, `{{languages}}`, `{{board}}`, `{{knowledge}}`, `{{faq}}`, `{{rules}}`, `{{caller_name}}`, `{{today}}` and more). The platform has one default text for the phone assistant, the two greetings and the call notes; any business can override one. A live preview fills the variables from a real business, versions can be restored, and the safety rules (no promises, no card numbers, how a call ends, the JSON format of the notes) are always added after your text and cannot be edited away.
 
-**Sign-in:** the admin uses the access token (`LAB_API_TOKENS`, with `LAB_OPEN_ACCESS=false`); owners use their private link. With sign-in off, anyone can open the portal, so turn it on before real customers use it.
+**Sign-in:** the admin uses the access token (`LAB_API_TOKENS`, with `LAB_OPEN_ACCESS=false`); owners use their private link. The server runs in production mode by default and **refuses to start** without `LAB_API_TOKENS`, or with `LAB_OPEN_ACCESS=true`. Open access is for local development only (`APP_ENV=development`). See `docs/SECURITY.md`.
 
 The prompt testing lab that tunes the assistant's behaviour lives at `/lab/` (it was the first version of this repository, see below).
 
@@ -59,7 +59,7 @@ Open **Settings**, paste your Groq key (console.groq.com/keys), press **Connect*
 ## Deploy
 
 Render: **New > Blueprint** on this repository (`render.yaml`). Set `DATABASE_URL` (Postgres) and `GROQ_API_KEY`; the rest is generated.
-Docker: `docker build -t voice-lab . && docker run -p 8000:8000 -e DATABASE_URL=... -e GROQ_API_KEY=... -e LAB_OPEN_ACCESS=true voice-lab`.
+Docker: `docker build -t voice-lab . && docker run -p 8000:8000 -e DATABASE_URL=... -e GROQ_API_KEY=... -e LAB_API_TOKENS=<long random token> -e LAB_SECRET_KEY=<long random key> voice-lab`.
 
 Run **one** instance. Phones only allow the microphone on **https**.
 
@@ -68,7 +68,7 @@ Run **one** instance. Phones only allow the microphone on **https**.
 | `DATABASE_URL` | Postgres URL. Without it the lab uses a local SQLite file, lost on restart in a container. |
 | `DATABASE_SCHEMA` | Put the lab's tables in their own schema (needed when sharing a database with another app). |
 | `GROQ_API_KEY`, `GROQ_MODEL` | Or paste the key in Settings instead. |
-| `LAB_API_TOKENS` / `LAB_OPEN_ACCESS` | Sign-in token, or `true` to run without sign-in on purpose (a warning banner is shown). Production refuses to start with neither. |
+| `LAB_API_TOKENS` / `LAB_OPEN_ACCESS` | Admin sign-in token (16+ characters; set it in production). `LAB_OPEN_ACCESS=true` works only in development; production refuses to start with it unless `LAB_ALLOW_OPEN_ACCESS_IN_PRODUCTION=yes-i-know`. |
 | `LAB_SECRET_KEY` | 32+ characters; encrypts keys saved in Settings. |
 | `APP_RATE_LIMIT_PER_MIN`, `APP_CORS_ORIGINS` | Limits and allowed browser origins for `/api/v1`. |
 
