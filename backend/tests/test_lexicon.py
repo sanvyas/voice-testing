@@ -97,3 +97,28 @@ def test_explained_words_reach_the_ai_prompt(platform):
     p = admin(platform, "POST", "/prompts/preview", json={"kind": "assistant", "text": "", "business_id": a_id}).json()
     assert "chhutta = small change" in p["text"] and "{{" not in p["text"]
     assert "feminine" in p["text"] or "masculine" in p["text"]
+
+
+def test_the_speech_hint_is_cut_by_bytes_because_hindi_letters_take_three_each():
+    """A shop with many Hindi words made the hint 979 bytes; Groq allows 896 and rejected every recording."""
+    entries = [{"forms": ["x"], "say": "बासमती चावल और काजू कतली", "meaning": "", "source": "business"}] * 200
+    hint = lexicon.stt_prompt(entries, {"business_name": "बाबूजी स्वीट्स", "owner_name": "रमेश"})
+    assert 0 < len(hint.encode("utf-8")) <= 700
+
+
+def test_a_rejected_hint_never_stops_speech_recognition(real_client):
+    import httpx
+    import llm
+    calls = []
+
+    def handler(req):
+        calls.append(req.content)
+        if b'name="prompt"' in req.content:
+            return httpx.Response(400, json={"error": {"message": "prompt length must be 896 characters or fewer"}})
+        return httpx.Response(200, json={"text": "ok suna"})
+    llm.set_transport(httpx.MockTransport(handler))
+    real_client.put("/api/lab/settings/providers/groq", json={"api_key": "gsk_abcdefgh"})
+    import asyncio
+    out = asyncio.run(llm.transcribe(b"audio", "a.mp3", "audio/mpeg", prompt="x" * 100))
+    assert out.text == "ok suna" and len(calls) == 2 and b'name="prompt"' not in calls[1]
+    assert len(llm._clip_bytes("बा" * 500, 800).encode("utf-8")) <= 800

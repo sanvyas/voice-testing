@@ -152,7 +152,7 @@ def apply(text: str, entries: list[dict]) -> str:
     return pat.sub(lambda m: table.get(m.group(0).lower(), m.group(0)), text) if pat else text
 
 
-def stt_prompt(entries: list[dict], profile: dict | None = None, limit: int = 420) -> str:
+def stt_prompt(entries: list[dict], profile: dict | None = None, limit: int = 700) -> str:
     """A short list of words for the speech recogniser, so names and local words are heard right."""
     names = [profile.get(k, "") for k in ("business_name", "owner_name")] if profile else []
     custom = [e["say"] for e in entries if e["source"] != "built-in"]
@@ -161,10 +161,10 @@ def stt_prompt(entries: list[dict], profile: dict | None = None, limit: int = 42
     for w in [n for n in names if n] + custom + starter:
         if w in out:
             continue
-        if size + len(w) + 2 > limit:
+        if size + len(w.encode("utf-8")) + 2 > limit:  # bytes, not characters: Hindi letters take three bytes each
             break
         out.append(w)
-        size += len(w) + 2
+        size += len(w.encode("utf-8")) + 2
     return ", ".join(out)
 
 

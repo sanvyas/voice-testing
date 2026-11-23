@@ -244,6 +244,12 @@ async def chat(
 
 # --- speech to text ---------------------------------------------------------------
 
+def _clip_bytes(text: str, limit: int) -> str:
+    """Providers count the Whisper hint in bytes, and Hindi letters take three each, so cut by bytes, not characters."""
+    raw = text.encode("utf-8")
+    return text if len(raw) <= limit else raw[:limit].decode("utf-8", "ignore")
+
+
 async def transcribe(
     audio: bytes, filename: str, content_type: str, *, language: str | None = None,
     provider: str | None = None, model: str | None = None, retries: int = 1, prompt: str | None = None,
@@ -260,7 +266,7 @@ async def transcribe(
     if language:
         data["language"] = language.split("-")[0].lower()  # Whisper wants ISO-639-1: en-IN -> en
     if prompt:
-        data["prompt"] = prompt[:800]  # a list of names and local words nudges Whisper to spell them right
+        data["prompt"] = _clip_bytes(prompt, 800)  # a list of names and local words nudges Whisper to spell them right
     last = "unknown error"
     for attempt in range(retries + 1):
         started = time.perf_counter()
@@ -269,6 +275,12 @@ async def transcribe(
                 f"{cfg['base']}/audio/transcriptions", headers={"Authorization": f"Bearer {cfg['key']}"},
                 data=data, files={"file": (filename or "audio.webm", audio, content_type or "application/octet-stream")},
             )
+            if response.status_code == 400 and "prompt" in data and "prompt" in response.text.lower():
+                data.pop("prompt")  # a hint must never stop speech recognition: if the provider rejects it, listen without it
+                response = await _get_client().post(
+                    f"{cfg['base']}/audio/transcriptions", headers={"Authorization": f"Bearer {cfg['key']}"},
+                    data=data, files={"file": (filename or "audio.webm", audio, content_type or "application/octet-stream")},
+                )
             response.raise_for_status()
             text = str(response.json().get("text", "")).strip()
             return Transcript(text, cfg["label"], use_model, int((time.perf_counter() - started) * 1000))
