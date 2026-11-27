@@ -64,6 +64,7 @@ export async function render(root) {
   function voiceCard(v) {
     const FIELD = { google: 'google_key', chatterbox: 'deepinfra_key' };
     const KEYNAME = { google: 'google', chatterbox: 'deepinfra' };
+    const edgeEngine = v.engines.find((e) => e.id === 'edge');
     const save = async (body, msg) => { try { await api('/settings/tts', { method: 'PUT', body }); if (msg) toast(msg); await load(); } catch (e) { toast(e.message, true); } };
     const lang = h('select', { 'aria-label': 'Sample language', style: 'width:auto' }, ...LANGS.map(([c, l]) => h('option', { value: c }, l)));
     const results = h('div', { class: 'stack', style: 'gap:4px', role: 'status' });
@@ -75,11 +76,14 @@ export async function render(root) {
       catch (err) { say(e.id, `${e.label}: ${err.message}`, true); }
     };
     const ready = v.engines.filter((e) => e.configured);
-    const compare = h('button', { onclick: async () => { mount(results); for (const e of ready) await sample(e); } }, 'Hear both, one after the other');
+    const compare = h('button', { onclick: async () => { mount(results); for (const e of ready) await sample(e); } }, ready.length > 2 ? 'Hear all, one after the other' : 'Hear both, one after the other');
     const usage = (e) => h('div', { class: 'small muted' }, `This month: ${e.used_chars.toLocaleString()} characters`, e.free_left !== null ? ` · ${e.free_left.toLocaleString()} free left` : '',
       ` · about $${e.estimated_cost_usd.toFixed(4)}`, e.reported_cost_usd ? ` · billed by the vendor: $${e.reported_cost_usd.toFixed(6)}` : '', ` · stops at ${e.cap_chars.toLocaleString()}`);
-    const blurb = { google: `$${v.engines[0].price_per_m} per 1M characters, the first ${v.engines[0].free_chars / 1e6}M each month are free. Ten Indian languages plus English. Standard and WaveNet voices.`,
-      chatterbox: `$${v.engines[1].price_per_m} per 1M characters. 23 languages, Hindi is the only Indian one. One default voice.` };
+    const googleEngine = v.engines.find((e) => e.id === 'google');
+    const chatEngine = v.engines.find((e) => e.id === 'chatterbox');
+    const blurb = { edge: "Free. Microsoft’s neural voices. Good quality Hindi and English. No API key needed.",
+      google: googleEngine ? `$${googleEngine.price_per_m} per 1M characters, the first ${googleEngine.free_chars / 1e6}M each month are free. Ten Indian languages plus English. Standard and WaveNet voices.` : '',
+      chatterbox: chatEngine ? `$${chatEngine.price_per_m} per 1M characters. 23 languages, Hindi is the only Indian one. One default voice.` : '' };
     const row = (id, title, detail, body, e) => h('div', { class: 'stack', style: 'gap:8px;padding-top:12px;border-top:1px solid var(--line)' },
       h('label', { class: 'row', style: 'gap:10px;font-weight:600' }, h('input', { type: 'radio', name: 'engine', checked: v.active === id, disabled: e ? !e.configured : false, onchange: () => save({ active: id }, 'Voice changed') }), title),
       h('div', { class: 'small muted' }, detail), body);
@@ -91,11 +95,17 @@ export async function render(root) {
     const googleOptions = h('div', { class: 'row' },
       h('select', { 'aria-label': 'Voice quality', onchange: (ev) => save({ google_tier: ev.target.value }) }, h('option', { value: 'Wavenet', selected: v.google_tier === 'Wavenet' }, 'WaveNet (more natural)'), h('option', { value: 'Standard', selected: v.google_tier === 'Standard' }, 'Standard (basic)')),
       h('select', { 'aria-label': 'Voice', onchange: (ev) => save({ google_gender: ev.target.value }) }, h('option', { value: 'F', selected: v.google_gender === 'F' }, 'Female'), h('option', { value: 'M', selected: v.google_gender === 'M' }, 'Male')));
-    const engineRow = (e) => row(e.id, e.label, blurb[e.id], e.configured
-      ? h('div', { class: 'stack', style: 'gap:8px' }, usage(e), e.id === 'google' ? googleOptions : null,
-        h('div', { class: 'row' }, h('button', { onclick: () => sample(e) }, 'Play sample'),
-          e.source === 'ui' ? h('button', { class: 'link danger', onclick: async () => { await api(`/settings/tts/${KEYNAME[e.id]}/key`, { method: 'DELETE' }); load(); } }, 'Remove key') : h('span', { class: 'small muted' }, e.key_hint)))
-      : keyForm(e), e);
+    const engineRow = (e) => {
+      if (e.id === 'edge') {
+        return row(e.id, e.label, blurb.edge, h('div', { class: 'stack', style: 'gap:8px' }, usage(e),
+          h('div', { class: 'row' }, h('button', { onclick: () => sample(e) }, 'Play sample'))), e);
+      }
+      return row(e.id, e.label, blurb[e.id], e.configured
+        ? h('div', { class: 'stack', style: 'gap:8px' }, usage(e), e.id === 'google' ? googleOptions : null,
+          h('div', { class: 'row' }, h('button', { onclick: () => sample(e) }, 'Play sample'),
+            e.source === 'ui' ? h('button', { class: 'link danger', onclick: async () => { await api(`/settings/tts/${KEYNAME[e.id]}/key`, { method: 'DELETE' }); load(); } }, 'Remove key') : h('span', { class: 'small muted' }, e.key_hint)))
+        : keyForm(e), e);
+    };
     return h('div', { class: 'card stack' }, h('h2', { style: 'margin:0' }, 'Voice it speaks with'),
       h('div', { class: 'small muted' }, 'Pick who reads the replies out loud on the Talk tab. Keys are stored encrypted. Each voice stops at a monthly limit so a test cannot run up a bill.'),
       !v.can_store && !ready.length ? h('div', { class: 'notice' }, 'This server needs LAB_SECRET_KEY set before it can store keys.') : null,

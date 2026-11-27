@@ -1,4 +1,4 @@
-"""Text-to-speech for the lab: Google Cloud TTS (Standard / WaveNet) and Chatterbox on DeepInfra.
+"""Text-to-speech: Edge (Microsoft Neural, free), Google Cloud TTS, and Chatterbox on DeepInfra.
 
 Same conventions as ``llm.py``: keys come from the Settings UI (``set_runtime``) or environment variables, are resolved
 at call time, and share llm's HTTP client (so tests can inject a transport with ``llm.set_transport``).
@@ -18,13 +18,16 @@ import hindi_speech
 import llm
 
 ENGINES = {
-    # price is per 1M characters, as read from each vendor's pricing page on 2026-11-07
+    # price is per 1M characters
+    "edge": {"label": "Edge (Microsoft Neural)", "key_env": "", "price_per_m": 0.0, "free_chars": 0,
+             "cap_env": "TTS_CAP_CHARS_EDGE", "default_cap": 50_000_000,
+             "key_help": "No key needed — uses Microsoft's free neural voices."},
     "google": {"label": "Google Cloud (Standard / WaveNet)", "key_env": "GOOGLE_TTS_API_KEY", "price_per_m": 4.0, "free_chars": 4_000_000,
                "cap_env": "TTS_CAP_CHARS_GOOGLE", "default_cap": 3_900_000, "key_help": "Google Cloud console → APIs → Cloud Text-to-Speech API → enable, then Credentials → API key"},
     "chatterbox": {"label": "Chatterbox (DeepInfra)", "key_env": "DEEPINFRA_API_KEY", "price_per_m": 1.0, "free_chars": 0,
                    "cap_env": "TTS_CAP_CHARS_CHATTERBOX", "default_cap": 1_000_000, "key_help": "deepinfra.com → Dashboard → API keys"},
 }
-KEY_NAMES = {"google": "google", "chatterbox": "deepinfra"}  # engine -> stored key name
+KEY_NAMES = {"edge": "edge", "google": "google", "chatterbox": "deepinfra"}  # engine -> stored key name
 MAX_CHARS = 4500  # Google accepts 5000 bytes, DeepInfra 5000 characters
 
 GOOGLE_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
@@ -68,7 +71,9 @@ def active() -> str:
 
 
 def key_for(engine: str) -> tuple[str | None, str | None]:
-    """(key, source) where source is 'ui', 'env' or None."""
+    """(key, source) where source is 'ui', 'env', 'builtin' or None."""
+    if engine == "edge":
+        return ("builtin", "builtin")
     ui = _runtime["keys"].get(KEY_NAMES[engine])
     if ui:
         return ui, "ui"
@@ -118,7 +123,7 @@ def engine_status() -> list[dict]:
     for engine, meta in ENGINES.items():
         key, source = key_for(engine)
         out.append({"id": engine, "label": meta["label"], "configured": bool(key), "source": source,
-                    "key_hint": ("…" + key[-4:]) if key and source == "ui" else ("set in server environment" if key else ""),
+                    "key_hint": ("no key needed" if source == "builtin" else ("…" + key[-4:]) if key and source == "ui" else ("set in server environment" if key else "")),
                     "price_per_m": meta["price_per_m"], "free_chars": meta["free_chars"], "cap_chars": cap_chars(engine), "key_help": meta["key_help"]})
     return out
 
@@ -137,12 +142,48 @@ def _explain(exc: Exception, label: str) -> str:
     return f"{label}: {detail}"
 
 
+EDGE_VOICES: dict[str, dict[tuple[str, int], tuple[str, str, str]]] = {
+    "hi-IN": {
+        ("F", 0): ("hi-IN-SwaraNeural", "+0%", "+0Hz"),
+        ("F", 1): ("hi-IN-SwaraNeural", "+5%", "+2Hz"),
+        ("M", 0): ("hi-IN-MadhurNeural", "+0%", "+0Hz"),
+        ("M", 1): ("hi-IN-MadhurNeural", "-8%", "-2Hz"),
+    },
+    "en-IN": {
+        ("F", 0): ("en-IN-NeerjaNeural", "+0%", "+0Hz"),
+        ("F", 1): ("en-IN-NeerjaNeural", "+5%", "+2Hz"),
+        ("M", 0): ("en-IN-PrabhatNeural", "+0%", "+0Hz"),
+        ("M", 1): ("en-IN-PrabhatNeural", "-8%", "-2Hz"),
+    },
+}
+EDGE_FALLBACK: dict[str, tuple[str, str, str]] = {
+    "F": ("en-US-AvaMultilingualNeural", "+0%", "+0Hz"),
+    "M": ("en-US-AndrewMultilingualNeural", "+0%", "+0Hz"),
+}
+
+
+def edge_voice(language: str, voice_id: str | None = None) -> tuple[str, str, str]:
+    """Pick an Edge TTS voice name, rate and pitch for the language and Munshi personality."""
+    from assistant import voices
+    v = voices.get(voice_id)
+    gender, pick = v["gender"], v["pick"]
+    locale = _locale(language) if language else "en-IN"
+    if locale.startswith("hi"):
+        locale = "hi-IN"
+    elif locale.startswith("en"):
+        locale = "en-IN"
+    group = EDGE_VOICES.get(locale, EDGE_VOICES.get("en-IN", {}))
+    entry = group.get((gender, pick)) or group.get((gender, 0))
+    return entry or EDGE_FALLBACK.get(gender, EDGE_FALLBACK["F"])
+
+
 async def synthesize(engine: str, text: str, language: str, *, phone: bool = False, lexicon: list | None = None, voice_id: str | None = None) -> Speech:
     if engine not in ENGINES:
         raise TTSError("This voice is played by your device, not the server.")
-    key, _ = key_for(engine)
-    if not key:
-        raise TTSError(f"{ENGINES[engine]['label']} has no API key yet. Add it in Settings.")
+    if engine != "edge":
+        key, _ = key_for(engine)
+        if not key:
+            raise TTSError(f"{ENGINES[engine]['label']} has no API key yet. Add it in Settings.")
     text = clean_text(text)
     if (language or "").lower().startswith("hi"):
         if lexicon:
@@ -153,7 +194,9 @@ async def synthesize(engine: str, text: str, language: str, *, phone: bool = Fal
         raise TTSError("Nothing to say.")
     started = time.perf_counter()
     try:
-        if engine == "google":
+        if engine == "edge":
+            voice, audio, mime, cost = await _edge(text, language, phone, voice_id)
+        elif engine == "google":
             voice, audio, mime, cost = await _google(key, text, language, phone, voice_id)
         else:
             voice, audio, mime, cost = await _chatterbox(key, text, language)
@@ -196,3 +239,28 @@ async def _chatterbox(key: str, text: str, language: str):
         raise TTSError("DeepInfra returned no audio.")
     cost = (data.get("inference_status") or {}).get("cost")
     return f"chatterbox-{code}", audio, "audio/mpeg", float(cost) if isinstance(cost, (int, float)) else None
+
+
+async def _edge(text: str, language: str, phone: bool = False, voice_id: str | None = None):
+    try:
+        import edge_tts
+    except ImportError:
+        raise TTSError("edge-tts package is not installed. Run: pip install edge-tts") from None
+    voice_name, rate, pitch = edge_voice(language, voice_id)
+    if phone:
+        rate = _bump_rate(rate, 5)
+    communicate = edge_tts.Communicate(text, voice_name, rate=rate, pitch=pitch)
+    audio = bytearray()
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio.extend(chunk["data"])
+    if not audio:
+        raise TTSError("Edge returned no audio.")
+    return voice_name, bytes(audio), "audio/mpeg", None
+
+
+def _bump_rate(rate: str, add: int) -> str:
+    """'+5%' + 5 -> '+10%'."""
+    current = int(rate.replace("%", "").replace("+", "")) if rate and rate != "+0%" else 0
+    total = current + add
+    return f"+{total}%" if total >= 0 else f"{total}%"

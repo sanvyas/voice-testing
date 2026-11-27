@@ -20,6 +20,7 @@ UNIT_PRICES = [
     ("Phone line (Plivo, India)", "Rs 0.38 per minute in 30-second steps, Rs 200 a month per number"),
     ("Understanding speech (Groq Whisper turbo)", "$0.04 per hour of audio, at least 10 seconds each time"),
     ("AI thinking (Groq gpt-oss-20b)", "$0.075 per million input tokens, $0.30 per million output tokens"),
+    ("Voice (Edge, Microsoft Neural)", "Free — no API key, no cost"),
     ("Voice (Google Standard or WaveNet)", "$4 per million characters, first 4 million a month free"),
     ("Voice (Chatterbox on DeepInfra)", "$1 per million characters"),
     ("WhatsApp reply (utility message)", "about Rs 0.13 each, as listed by MyOperator; Meta's own rate card not checked"),

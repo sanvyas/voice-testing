@@ -13,7 +13,7 @@ MP3 = b"ID3\x04fake-mp3-bytes"
 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
-    for k in ("GOOGLE_TTS_API_KEY", "DEEPINFRA_API_KEY", "TTS_CAP_CHARS_GOOGLE", "TTS_CAP_CHARS_CHATTERBOX"):
+    for k in ("GOOGLE_TTS_API_KEY", "DEEPINFRA_API_KEY", "TTS_CAP_CHARS_GOOGLE", "TTS_CAP_CHARS_CHATTERBOX", "TTS_CAP_CHARS_EDGE"):
         monkeypatch.delenv(k, raising=False)
     yield
     llm.set_transport(None)
@@ -118,6 +118,81 @@ def test_settings_are_validated_and_keys_can_be_removed(real_client):
     assert (status["google_tier"], status["google_gender"]) == ("Standard", "M") and next(e for e in status["engines"] if e["id"] == "google")["key_hint"] == "…1234"
     assert real_client.delete(f"{API}/settings/tts/google/key").status_code == 204
     assert not next(e for e in real_client.get(f"{API}/settings/tts").json()["engines"] if e["id"] == "google")["configured"]
+
+
+def test_edge_needs_no_key_and_is_always_configured():
+    key, source = tts.key_for("edge")
+    assert key == "builtin" and source == "builtin"
+    status = tts.engine_status()
+    edge = next(e for e in status if e["id"] == "edge")
+    assert edge["configured"] is True and edge["price_per_m"] == 0.0 and edge["key_hint"] == "no key needed"
+
+
+def test_edge_voice_picks_hindi_voices_by_personality():
+    name, rate, pitch = tts.edge_voice("hi-IN", "v1")
+    assert name == "hi-IN-SwaraNeural" and rate == "+0%"
+    name, rate, pitch = tts.edge_voice("hi-IN", "v2")
+    assert name == "hi-IN-MadhurNeural"
+    name, rate, pitch = tts.edge_voice("en-IN", "v3")
+    assert name == "en-IN-NeerjaNeural" and rate == "+5%"
+    name, rate, pitch = tts.edge_voice("en-IN", "v4")
+    assert name == "en-IN-PrabhatNeural" and rate == "-8%"
+
+
+def test_edge_voice_falls_back_for_unknown_locales():
+    name, _, _ = tts.edge_voice("sw-KE", "v1")
+    assert "Neural" in name
+
+
+def test_bump_rate():
+    assert tts._bump_rate("+5%", 5) == "+10%"
+    assert tts._bump_rate("+0%", 5) == "+5%"
+    assert tts._bump_rate("-3%", 5) == "+2%"
+    assert tts._bump_rate("+0%", 0) == "+0%"
+
+
+@pytest.mark.asyncio
+async def test_edge_synthesize_with_mock(monkeypatch):
+    """Mock edge_tts.Communicate to verify the integration path."""
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate="+0%", pitch="+0Hz"):
+            self._text, self._voice = text, voice
+        async def stream(self):
+            yield {"type": "audio", "data": MP3[:8]}
+            yield {"type": "audio", "data": MP3[8:]}
+            yield {"type": "WordBoundary", "offset": 0, "duration": 100, "text": "hi"}
+    import sys
+    fake_mod = type(sys)("edge_tts")
+    fake_mod.Communicate = FakeCommunicate
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_mod)
+    tts.set_runtime({"active": "edge"})
+    speech = await tts.synthesize("edge", "नमस्ते", "hi-IN")
+    assert speech.audio == MP3 and speech.engine == "edge" and speech.cost_usd is None
+    assert "SwaraNeural" in speech.voice
+
+
+@pytest.mark.asyncio
+async def test_edge_synthesize_raises_on_empty_audio(monkeypatch):
+    class EmptyCommunicate:
+        def __init__(self, text, voice, **kw): pass
+        async def stream(self):
+            return
+            yield  # noqa: unreachable - makes this an async generator
+    import sys
+    fake_mod = type(sys)("edge_tts")
+    fake_mod.Communicate = EmptyCommunicate
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_mod)
+    tts.set_runtime({"active": "edge"})
+    with pytest.raises(tts.TTSError, match="Edge returned no audio"):
+        await tts.synthesize("edge", "Hello", "en-IN")
+
+
+def test_edge_appears_in_settings_api(real_client):
+    status = real_client.get(f"{API}/settings/tts").json()
+    edge = next(e for e in status["engines"] if e["id"] == "edge")
+    assert edge["configured"] is True and edge["price_per_m"] == 0.0
+    res = real_client.put(f"{API}/settings/tts", json={"active": "edge"})
+    assert res.status_code == 200 and res.json()["active"] == "edge"
 
 
 def test_text_is_cleaned_before_speaking():

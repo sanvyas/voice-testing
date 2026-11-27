@@ -175,7 +175,7 @@ async def speak(body: SpeakRequest, request: Request):
     """Turn text into audio with the chosen engine. Counts characters against a monthly cap so a test cannot run up a bill."""
     engine = body.engine or tts.active()
     if engine not in tts.ENGINES:
-        raise ServiceError("This voice is played by your device. Choose Google or Chatterbox in Settings to hear it from the server.", 409)
+        raise ServiceError("This voice is played by your device. Choose Edge, Google or Chatterbox in Settings to hear it from the server.", 409)
     text = tts.clean_text(body.text)
     await run_db(lambda session: settings_store.tts_check_cap(session, engine, len(text)))
     try:
