@@ -23,6 +23,7 @@ UNIT_PRICES = [
     ("Voice (Edge, Microsoft Neural)", "Free — no API key, no cost"),
     ("Voice (Google Standard or WaveNet)", "$4 per million characters, first 4 million a month free"),
     ("Voice (Chatterbox on DeepInfra)", "$1 per million characters"),
+    ("Sign-in SMS (MSG91)", "About Rs 0.20 per OTP (MSG91 handles DLT registration)"),
     ("WhatsApp reply (utility message)", "about Rs 0.13 each, as listed by MyOperator; Meta's own rate card not checked"),
 ]
 

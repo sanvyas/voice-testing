@@ -26,7 +26,7 @@ export async function render(root) {
   const langRow = h('div', { class: 'langs' });
   const drawLangs = () => mount(langRow, ...LANGS.map(([k, l]) => h('button', { class: 'lg' + (f.langs.has(k) ? ' on' : ''), onclick: () => { f.langs.has(k) ? f.langs.delete(k) : f.langs.add(k); drawLangs(); paint(); } }, (f.langs.has(k) ? '✓ ' : '') + t(l))));
   mount(body,
-    h('div', { class: 'cardw form' }, field(t(['दुकान का नाम', 'Shop name']), 'biz'), field(t(['आपका नाम', 'Your name']), 'owner'), field(t(['पता (ग्राहक को WhatsApp पर जाएगा)', 'Address (sent to callers on WhatsApp)']), 'addr'),
+    h('div', { class: 'cardw form' }, field(t(['दुकान का नाम', 'Shop name']), 'biz'), field(t(['आपका नाम', 'Your name']), 'owner'), field(t(['पता', 'Address']), 'addr'),
       h('div', { class: 'two' }, field(t(['दुकान खुलती है', 'Opens at']), 'open', { type: 'time' }), field(t(['दुकान बंद होती है', 'Closes at']), 'close', { type: 'time' }))),
     h('div', { class: 'cardw', style: 'display:flex;flex-direction:column;gap:10px' }, h('div', { class: 'f' }, t(['Munshi किन भाषाओं में बात करे', 'Languages Munshi speaks'])), langRow),
     h('button', { class: 'pick', onclick: () => save(`#/voice?from=setup`) }, h('div', { class: 'o' }, icon('sound')), h('div', { style: 'flex:1' }, h('div', { class: 'f' }, t(['Munshi की आवाज़', "Munshi's voice"])), h('div', { style: 'font-size:16px;font-weight:600' }, `${isHi() ? v.name_hi : v.name} · ${isHi() ? v.desc_hi : v.desc}`)), h('span', { style: 'color:#8a9a95' }, icon('next'))),

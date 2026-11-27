@@ -19,6 +19,7 @@ from lab.service import ServiceError, get_or_404, iso
 
 from . import board, config, costs, integrations, lexicon, people, prompts, service, tenant, translate, vision, voices, whatsapp
 from .access import admin_only, scope, throttle
+from .integrations import whatsapp_enabled
 
 router = APIRouter(dependencies=[Depends(scope)])
 ADMIN = [Depends(admin_only)]  # platform-level settings an owner never sees
@@ -220,7 +221,7 @@ SAMPLES = {"hi-IN": "नमस्ते, मैं मुंशी हूँ, �
 async def voice_sample(body: VoiceSampleIn, session: Session = Depends(get_session)):
     """A short clip in a voice (a sample, or the practice call's replies). If no server voice is set up the app uses the phone's own voice."""
     engine = tts.active()
-    if engine != "google" or not tts.key_for(engine)[0]:
+    if engine not in tts.ENGINES or not tts.key_for(engine)[0]:
         raise ServiceError("No server voice is set up yet, so this is played by your phone.", 409)
     text = (body.text or SAMPLES[body.language]).strip()
     voice_id = body.voice or voices.get(service.get_profile(session).get("voice"))["id"]
@@ -253,12 +254,14 @@ def get_status(request: Request, session: Session = Depends(get_session)):
         "role": request.state.role, "business": {"id": biz.id, "name": biz.name, "active": biz.active},
         "ai_ready": bool(llm.configured_providers()), "profile_ready": bool(profile["business_name"] and profile["owner_name"]), "mode": profile["mode"], "assistant_on": profile["assistant_on"],
         "board": {"items": len(items), "sold_out": sum(1 for i in items if i.status == "sold_out")},
-        "phone": {"connected": bool(number), "number": number}, "whatsapp": {"connected": settings_store.whatsapp_status(session, box)["connected"]},
+        "phone": {"connected": bool(number), "number": number},
+        "whatsapp": {"connected": settings_store.whatsapp_status(session, box)["connected"]} if whatsapp_enabled() else {"connected": False, "hidden": True},
         "forwarding": [{**c, "dial": c["dial"].format(n=number.lstrip("+") if number else "<your Munshi number>")} for c in FORWARDING_CODES],
     }
     if admin:
         out["phone"] = {**phone_info, "number": number}
-        out["whatsapp"] = {**settings_store.whatsapp_status(session, box), "template_body": whatsapp.TEMPLATE_BODY}
+        out["whatsapp"] = ({**settings_store.whatsapp_status(session, box), "template_body": whatsapp.TEMPLATE_BODY} if whatsapp_enabled()
+                           else {"connected": False, "hidden": True})
         engine = tts.active()
         out["voice"] = {"engine": engine, "label": "Your device's voice" if engine == "device" else tts.ENGINES[engine]["label"], "server_voice_ready": any(e["configured"] for e in tts.engine_status())}
         out["webhooks"] = {"answer": f"{base}/telephony/plivo/answer", "hangup": f"{base}/telephony/plivo/hangup", "https": base.startswith("https://")}

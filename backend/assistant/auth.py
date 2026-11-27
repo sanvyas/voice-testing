@@ -192,7 +192,7 @@ class VerifyIn(Strict):
 
 @router.get("/config")
 async def auth_config():
-    return {"demo": {"phone": DEMO_PHONE, "code": DEMO_CODE} if demo_enabled() else None, "sms_ready": sms.configured(), "terms_version": legal.VERSION}
+    return {"demo": {"phone": DEMO_PHONE, "code": DEMO_CODE} if demo_enabled() else None, "sms_ready": sms.configured(), "otp_provider": sms.provider(), "terms_version": legal.VERSION}
 
 
 @router.post("/request")

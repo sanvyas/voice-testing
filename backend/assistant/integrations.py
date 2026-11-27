@@ -1,6 +1,7 @@
 """One place to see every connection, whether it works, and to test it with one tap."""
 from __future__ import annotations
 
+import os
 import time
 
 import httpx
@@ -15,6 +16,10 @@ from lab.models import utcnow
 from . import vision
 
 CHECKS_KEY = "assistant.checks"
+
+
+def whatsapp_enabled() -> bool:
+    return os.getenv("MUNSHI_WHATSAPP", "off").strip().lower() not in {"off", "0", "false", "no"}
 
 
 def _checks(session: Session) -> dict:
@@ -45,7 +50,10 @@ def overview(session: Session, box, db_info: dict) -> list[dict]:
         {"id": "vision", "name": "Photo reader", "what": "Reads photos of price lists, shelves and bills.", "connected": v_ok, "detail": f"{v_provider} · {v_model}" if v_ok else f"{v_provider} is not connected", "can_test": True},
         {"id": "voice_google", "name": "Voice: Google", "what": "Speaks to callers in Indian languages.", "connected": voices["google"]["configured"], "detail": f"{used['google']['chars']:,} characters this month" if voices["google"]["configured"] else "No key", "can_test": True},
         {"id": "voice_chatterbox", "name": "Voice: Chatterbox", "what": "Cheaper voice for Hindi and English.", "connected": voices["chatterbox"]["configured"], "detail": f"{used['chatterbox']['chars']:,} characters this month" if voices["chatterbox"]["configured"] else "No key", "can_test": True},
-        {"id": "whatsapp", "name": "WhatsApp replies", "what": "Sends callers an instant message after a missed call.", "connected": wa["connected"], "detail": f"Number ID {wa['phone_number_id']} · template {wa['template']}" if wa["connected"] else "Not connected", "can_test": True},
+        *(
+            [{"id": "whatsapp", "name": "WhatsApp replies", "what": "Sends callers an instant message after a missed call.", "connected": wa["connected"], "detail": f"Number ID {wa['phone_number_id']} · template {wa['template']}" if wa["connected"] else "Not connected", "can_test": True}]
+            if whatsapp_enabled() else []
+        ),
         {"id": "phone", "name": "Phone line (Plivo)", "what": "Receives the calls your phone forwards.", "connected": phone["connected"], "detail": phone["number"] if phone["connected"] else "Not connected", "can_test": True},
         {"id": "database", "name": "Database", "what": "Where calls, notes, the board and settings are kept.", "connected": True, "detail": db_info["label"], "can_test": False},
     ]

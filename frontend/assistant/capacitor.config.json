@@ -1,0 +1,22 @@
+{
+  "appId": "app.munshi.owner",
+  "appName": "Munshi",
+  "webDir": ".",
+  "server": {
+    "url": "https://SET_YOUR_PRODUCTION_URL/assistant/",
+    "cleartext": false
+  },
+  "android": {
+    "backgroundColor": "#F5F7F6"
+  },
+  "ios": {
+    "backgroundColor": "#F5F7F6"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "backgroundColor": "#F5F7F6",
+      "showSpinner": false
+    }
+  }
+}

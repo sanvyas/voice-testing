@@ -51,7 +51,7 @@ export async function render(root, { param }) {
       h('div', { style: 'flex:1;min-width:0' }, h('div', { class: 'hd', style: 'font:700 20px/1.3 \'Space Grotesk\',\'Noto Sans Devanagari\'' }, name), h('div', { style: 'font-size:13px;color:var(--muted)' }, `${dayLabel(days)} · ${clock(c.started_at)} · ${duration(c.duration_s)}`))),
     body,
     h('div', { class: 'bar' }, dial ? h('a', { class: 'big', href: telLink(dial) }, icon('phone', 24), t(['कॉल करें', 'Call back'])) : null,
-      h('div', { class: 'acts' }, h('button', { class: 'act', onclick: () => go(`#/thread/${encodeURIComponent(phoneKey)}`) }, icon('chat', 20), 'WhatsApp'),
+      h('div', { class: 'acts' }, h('button', { class: 'act', onclick: () => go(`#/thread/${encodeURIComponent(phoneKey)}`) }, icon('chat', 20), t(['संदेश', 'Messages'])),
         h('button', { class: 'act', onclick: addNote }, icon('pencil', 20), t(['नोट जोड़ें', 'Add note'])),
         h('button', { class: 'act' + (c.reviewed ? ' on' : ''), onclick: done }, icon('check', 20), c.reviewed ? t(['हो गया', 'Done']) : t(['हो गया', 'Mark done']))))));
   draw();

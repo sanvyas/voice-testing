@@ -43,7 +43,7 @@ def owner(token):
 
 def test_the_login_screen_can_show_the_demo_number(client):
     cfg = client.get(f"{AUTH}/config").json()
-    assert cfg["demo"] == {"phone": "+919000000001", "code": "246810"} and "sms_ready" in cfg
+    assert cfg["demo"] == {"phone": "+919000000001", "code": "246810"} and "sms_ready" in cfg and "otp_provider" in cfg
 
 
 def test_a_new_number_signs_up_and_the_same_number_signs_back_in(client, sent):
@@ -192,6 +192,7 @@ def test_sms_goes_through_plivo_with_the_registered_sender_and_template(monkeypa
     async def fake_run_db(fn):
         return fn(None)
     monkeypatch.setattr(sms, "run_db", fake_run_db)
+    monkeypatch.setenv("MUNSHI_OTP_PROVIDER", "plivo")
     monkeypatch.setenv("MUNSHI_SMS_SENDER", "MUNSHI")
     monkeypatch.setenv("MUNSHI_DLT_ENTITY_ID", "E1")
     monkeypatch.setenv("MUNSHI_DLT_TEMPLATE_ID", "T1")
@@ -202,3 +203,45 @@ def test_sms_goes_through_plivo_with_the_registered_sender_and_template(monkeypa
     with pytest.raises(ServiceError) as e:
         asyncio.run(sms.send_otp("+919876543210", "123456"))
     assert e.value.status == 503
+
+
+def test_sms_goes_through_msg91_with_authkey_and_template(monkeypatch):
+    import asyncio
+
+    import llm
+
+    seen = {}
+
+    class R:
+        status_code = 200
+
+    class C:
+        async def post(self, url, json=None, headers=None, timeout=None, **kw):
+            seen.update(url=url, json=json, headers=headers)
+            return R()
+    monkeypatch.setattr(llm, "http_client", lambda: C())
+    monkeypatch.setenv("MUNSHI_OTP_PROVIDER", "msg91")
+    monkeypatch.setenv("MUNSHI_MSG91_AUTHKEY", "AUTH123")
+    monkeypatch.setenv("MUNSHI_MSG91_TEMPLATE_ID", "TPL456")
+    asyncio.run(sms.send_otp("+919876543210", "654321"))
+    assert seen["url"] == "https://control.msg91.com/api/v5/otp"
+    assert seen["headers"]["authkey"] == "AUTH123"
+    assert seen["json"] == {"template_id": "TPL456", "mobile": "919876543210", "otp": "654321"}
+    monkeypatch.delenv("MUNSHI_MSG91_AUTHKEY")
+    with pytest.raises(ServiceError) as e:
+        asyncio.run(sms.send_otp("+919876543210", "654321"))
+    assert e.value.status == 503
+
+
+def test_sms_provider_defaults_to_msg91():
+    assert sms.provider() == "msg91"
+
+
+def test_sms_configured_checks_the_right_provider(monkeypatch):
+    assert not sms.configured()
+    monkeypatch.setenv("MUNSHI_MSG91_AUTHKEY", "key")
+    assert sms.configured()
+    monkeypatch.setenv("MUNSHI_OTP_PROVIDER", "plivo")
+    assert not sms.configured()
+    monkeypatch.setenv("MUNSHI_SMS_SENDER", "MUNSHI")
+    assert sms.configured()

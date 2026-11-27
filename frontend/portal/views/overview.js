@@ -10,7 +10,7 @@ async function businessOverview(page) {
   const m = costs.month;
   const todo = [];
   if (!status.assistant_on) todo.push(['Assistant is switched off', 'Nobody is answered by the AI.', '/assistant/#/setup', 'Turn on']);
-  for (const i of integ) if (!i.connected && ['ai', 'phone', 'whatsapp', 'vision'].includes(i.id)) todo.push([`${i.name} is not connected`, i.what, '#/integrations', 'Connect']);
+  for (const i of integ) if (!i.connected && ['ai', 'phone', 'vision'].includes(i.id)) todo.push([`${i.name} is not connected`, i.what, '#/integrations', 'Connect']);
   for (const i of integ) if (i.last_check && !i.last_check.ok) todo.push([`${i.name} failed its last test`, i.last_check.message, '#/integrations', 'Look']);
   if (board.stale) todo.push([`${board.stale} price${board.stale > 1 ? 's' : ''} out of date`, 'The assistant treats them as “ask me” until you check.', '#/knowledge', 'Check']);
   if (asked.length) todo.push([`Callers asked about ${asked.length} item${asked.length > 1 ? 's' : ''} you have not priced`, asked.slice(0, 3).map((a) => a.term).join(', '), '#/knowledge', 'Add prices']);

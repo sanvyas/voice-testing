@@ -1,3 +1,4 @@
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 import { h, mount } from '/lab/ui.js';
 import { setBusinessKey, getBusinessKey, setUnauthorizedHandler } from '/lab/api.js';
 import { t, setLang, getLang } from './i18n.js';

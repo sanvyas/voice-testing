@@ -46,7 +46,7 @@ def ai(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
-    for k in ("GOOGLE_TTS_API_KEY", "DEEPINFRA_API_KEY", "PUBLIC_BASE_URL"):
+    for k in ("GOOGLE_TTS_API_KEY", "DEEPINFRA_API_KEY", "PUBLIC_BASE_URL", "MUNSHI_WHATSAPP"):
         monkeypatch.delenv(k, raising=False)
     yield
     llm.set_transport(None)
@@ -513,7 +513,8 @@ def connect_whatsapp(client):
     return r.json()
 
 
-def test_whatsapp_settings_are_validated_and_the_token_is_never_returned(client):
+def test_whatsapp_settings_are_validated_and_the_token_is_never_returned(client, monkeypatch):
+    monkeypatch.setenv("MUNSHI_WHATSAPP", "on")
     assert client.put(f"{API}/whatsapp", json={"phone_number_id": "abc"}).status_code == 422
     assert client.put(f"{API}/whatsapp", json={"template": "Has Spaces"}).status_code == 422
     assert client.put(f"{API}/whatsapp", json={"language": "english"}).status_code == 422

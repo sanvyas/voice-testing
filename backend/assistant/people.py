@@ -17,7 +17,7 @@ from lab.models import BoardItem, Business, Call, Contact, WaMessage, utcnow
 from lab.runner import run_db
 from lab.service import ServiceError, iso
 
-from . import board, config, service, tenant
+from . import board, config, integrations, service, tenant
 
 IST = timezone(timedelta(hours=5, minutes=30))
 STALE_FACT_HOURS = 168
@@ -144,6 +144,8 @@ def thread(session: Session, phone: str) -> dict:
 
 async def send_message(phone: str, text: str) -> dict:
     """The owner's WhatsApp reply. It is recorded and the person's waiting calls are marked done only if WhatsApp really accepted it."""
+    if not integrations.whatsapp_enabled():
+        raise ServiceError("WhatsApp replies are not enabled yet.", 409)
     from . import whatsapp
 
     text = re.sub(r"[ \t]+", " ", (text or "")).strip()

@@ -333,8 +333,8 @@ def readiness(request: Request, session: Session = Depends(get_session)):
         return {"id": id_, "title": title, "ok": bool(ok), "level": level, "detail": detail, "fix": "" if ok else fix}
     checks = [
         c("admin_signin", "Platform sign-in is on", bool(cfg.api_tokens) and not cfg.open_access, "Anyone with the address can open the portal and every business." if (cfg.open_access or not cfg.api_tokens) else "The portal needs the admin token.", "Set LAB_API_TOKENS and LAB_OPEN_ACCESS=false on the server."),
-        c("owner_sms", "Sign-in codes can be sent by SMS", sms.configured() and phone["connected"], "Owners cannot sign in with a new number until SMS works." if not (sms.configured() and phone["connected"]) else "SMS is set up.",
-          "Save the Plivo account under Integrations, then set MUNSHI_SMS_SENDER, MUNSHI_DLT_ENTITY_ID, MUNSHI_DLT_TEMPLATE_ID and MUNSHI_OTP_TEMPLATE (India needs a registered sender and template)."),
+        c("owner_sms", "Sign-in codes can be sent by SMS", sms.configured(), "Owners cannot sign in with a new number until SMS works." if not sms.configured() else f"SMS is set up ({sms.provider()}).",
+          "Set MUNSHI_MSG91_AUTHKEY and MUNSHI_MSG91_TEMPLATE_ID (recommended — MSG91 handles DLT for you), or set MUNSHI_OTP_PROVIDER=plivo with MUNSHI_SMS_SENDER and DLT vars."),
         c("legal", "Policy pages name the company and the grievance officer", not legal_missing, ("Still to fill: " + ", ".join(legal_missing)) if legal_missing else "Filled in.", "Set LEGAL_ENTITY, LEGAL_ADDRESS, GRIEVANCE_NAME, GRIEVANCE_EMAIL, SUPPORT_EMAIL and LEGAL_JURISDICTION on the server, then have a lawyer read /legal/privacy and /legal/terms."),
         c("ai", "An AI provider is connected", bool(providers), ", ".join(providers) or "None.", "Add an AI key under Integrations."),
         c("ai_backup", "A second AI provider is ready if the first fails or runs out", len(providers) >= 2, f"{len(providers)} connected." if providers else "None.", "Add a second provider (for example Sarvam) so calls keep being answered when one hits its limit.", "recommended"),

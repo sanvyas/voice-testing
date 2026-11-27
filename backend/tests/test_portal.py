@@ -301,12 +301,16 @@ def test_reading_costs_never_disturbs_saved_voice_keys(client, ai):
 def test_every_connection_is_listed_with_its_state(client, ai, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
     rows = {r["id"]: r for r in client.get(f"{API}/integrations").json()}
-    assert set(rows) == {"ai", "speech", "vision", "voice_google", "voice_chatterbox", "whatsapp", "phone", "database"}
-    assert rows["ai"]["connected"] and not rows["whatsapp"]["connected"] and not rows["phone"]["connected"] and rows["database"]["can_test"] is False
+    assert set(rows) == {"ai", "speech", "vision", "voice_google", "voice_chatterbox", "phone", "database"}
+    assert rows["ai"]["connected"] and not rows["phone"]["connected"] and rows["database"]["can_test"] is False
     assert rows["vision"]["detail"].startswith("groq · ")
+    monkeypatch.setenv("MUNSHI_WHATSAPP", "on")
+    rows2 = {r["id"]: r for r in client.get(f"{API}/integrations").json()}
+    assert "whatsapp" in rows2 and not rows2["whatsapp"]["connected"]
 
 
 def test_connections_can_be_tested_with_one_tap_and_the_result_is_remembered(client, ai, monkeypatch):
+    monkeypatch.setenv("MUNSHI_WHATSAPP", "on")
     seen = []
 
     def handler(req):
@@ -333,7 +337,8 @@ def test_connections_can_be_tested_with_one_tap_and_the_result_is_remembered(cli
     assert client.post(f"{API}/integrations/nonsense/test").status_code == 404
 
 
-def test_a_failing_connection_says_why(client, ai):
+def test_a_failing_connection_says_why(client, ai, monkeypatch):
+    monkeypatch.setenv("MUNSHI_WHATSAPP", "on")
     llm.set_transport(httpx.MockTransport(lambda req: httpx.Response(400, json={"error": {"message": "(#190) Invalid OAuth access token"}}) if req.url.host == "graph.facebook.com" else httpx.Response(401)))
     connect_whatsapp(client)
     r = client.post(f"{API}/integrations/whatsapp/test").json()

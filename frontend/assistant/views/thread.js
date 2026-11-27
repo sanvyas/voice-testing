@@ -59,7 +59,7 @@ export async function render(root, { param }) {
     if (!text.trim() || sending) return;
     if (!isOnline()) return toast(t(['इंटरनेट नहीं है। संदेश नहीं गया।', 'No internet. Message not sent.']), { bad: true, high: true });
     sending = true;
-    try { await A('/messages', { method: 'POST', body: { phone: data.phone, text: text.trim() } }); toast(t(['WhatsApp पर भेजा', 'Sent on WhatsApp']), { high: true }); setText(''); micNote.hidden = true; await reload(); }
+    try { await A('/messages', { method: 'POST', body: { phone: data.phone, text: text.trim() } }); toast(t(['भेजा', 'Sent']), { high: true }); setText(''); micNote.hidden = true; await reload(); }
     catch (e) { if (e.status === 0) toast(t(['इंटरनेट नहीं है। संदेश नहीं गया।', 'No internet. Message not sent.']), { bad: true, high: true }); else failed(e.message); }
     finally { sending = false; }
   }
@@ -80,12 +80,12 @@ export async function render(root, { param }) {
 
   const call = data.phone ? h('a', { class: 'mini-call', href: telLink(data.phone), 'aria-label': t(['कॉल करें', 'Call back']) }, icon('phone', 24)) : null;
   const composer = data.spam ? h('div', { class: 'spamnote' }, t(['यह सेल्स कॉल थी। जवाब देने की ज़रूरत नहीं।', 'This was a sales call. No reply needed.']))
-    : !data.can_reply ? h('div', { class: 'spamnote' }, t(['इस कॉल का नंबर नहीं मिला, इसलिए WhatsApp जवाब नहीं भेज सकते।', 'This call had no number, so a WhatsApp reply cannot be sent.']))
+    : !data.can_reply ? h('div', { class: 'spamnote' }, t(['इस कॉल का नंबर नहीं मिला, इसलिए जवाब नहीं भेज सकते।', 'This call had no number, so a reply cannot be sent.']))
       : h('div', { class: 'composer' }, pendEl, micNote, chipsEl, h('div', { class: 'inputrow' }, h('div', { class: 'msgbox' }, input, micBtn), sendBtn));
   mount(root, h('div', { class: 'thread' },
     h('div', { class: 'th-top' }, h('button', { class: 'btn-ic', 'aria-label': t(['वापस', 'Back']), onclick: () => go('#/calls') }, icon('back', 28)),
       h('div', { class: 'av sm' + (data.pending.length ? ' wait' : '') }, initial(data.name)),
-      h('div', { style: 'flex:1;min-width:0' }, h('b', { style: 'font-size:17px' }, data.name), h('div', { style: 'font-size:12.5px;color:var(--muted)' }, `${data.phone || '—'} · WhatsApp`)), call),
+      h('div', { style: 'flex:1;min-width:0' }, h('b', { style: 'font-size:17px' }, data.name), h('div', { style: 'font-size:12.5px;color:var(--muted)' }, data.phone || '—')), call),
     body, composer));
   drawBody(); drawComposerParts();
   return () => { alive = false; listener.close(); };

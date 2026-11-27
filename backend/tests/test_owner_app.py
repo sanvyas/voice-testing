@@ -82,7 +82,8 @@ def test_no_total_is_guessed_when_a_price_or_unit_does_not_match(client, ai):
     assert [c["label"] for c in t["chips"]] == ["Call tonight", "Reply"]
 
 
-def test_an_owners_reply_goes_out_and_marks_the_person_done_only_if_whatsapp_accepts_it(client, ai):
+def test_an_owners_reply_goes_out_and_marks_the_person_done_only_if_whatsapp_accepts_it(client, ai, monkeypatch):
+    monkeypatch.setenv("MUNSHI_WHATSAPP", "on")
     profile(client, mode="board")
     cid = make_call(client, ai, "98765 43210", RICH)
     assert client.post(f"{API}/messages", json={"phone": "+919876543210", "text": "Total Rs 650."}).status_code == 409  # WhatsApp not connected
@@ -98,7 +99,15 @@ def test_an_owners_reply_goes_out_and_marks_the_person_done_only_if_whatsapp_acc
     assert client.get(f"{API}/calls/{cid}").json()["reviewed"] is True
 
 
-def test_a_closed_whatsapp_window_is_explained_and_nothing_is_marked_done(client, ai):
+def test_whatsapp_replies_are_blocked_when_feature_is_off(client, ai):
+    profile(client, mode="board")
+    make_call(client, ai, "98765 43210", RICH)
+    r = client.post(f"{API}/messages", json={"phone": "+919876543210", "text": "Total Rs 650."})
+    assert r.status_code == 409 and "not enabled" in r.json()["detail"]
+
+
+def test_a_closed_whatsapp_window_is_explained_and_nothing_is_marked_done(client, ai, monkeypatch):
+    monkeypatch.setenv("MUNSHI_WHATSAPP", "on")
     profile(client, mode="board")
     make_call(client, ai, "98765 43210", RICH)
     wa_transport([], status=400, body={"error": {"code": 131047, "message": "Re-engagement message"}})
