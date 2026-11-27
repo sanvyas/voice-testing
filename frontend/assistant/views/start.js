@@ -58,6 +58,12 @@ export async function render(root, { param }) {
       ok: () => true, save: null }),
     6: () => ({ title: t(['एक कॉल आज़माएँ', 'Try a call']), sub: t(['खुद ग्राहक बनकर Munshi से बात करके देखें।', 'Talk to Munshi as if you were a customer.']),
       view: [h('button', { class: 'pick', onclick: async () => { await finish(); go('#/try'); } }, h('div', { class: 'o' }, icon('mic')), h('div', { style: 'flex:1' }, h('div', { style: 'font-size:17px;font-weight:700' }, t(['अभी आज़माएँ', 'Try it now'])), h('div', { class: 'f' }, t(['माइक से बोलें या लिखें', 'Speak or type'])), ), h('span', { style: 'color:#8a9a95' }, icon('next'))),
+        h('div', { class: 'cardw', style: 'margin-top:14px;padding:14px 16px' },
+          h('div', { style: 'font-size:14px;font-weight:600;margin-bottom:8px' }, t(['ऐसे बोलकर देखें:', 'Try saying:'])),
+          h('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--muted)' },
+            h('div', {}, '• ', t(['"आटे का रेट क्या है?"', '"What\'s the rate for atta?"'])),
+            h('div', {}, '• ', t(['"दुकान कब तक खुली है?"', '"When does the shop close?"'])),
+            h('div', {}, '• ', t(['"5 किलो चीनी भेज दो"', '"Send 5 kg sugar"'])))),
         h('p', { class: 'note' }, t(['बाद में सेटिंग में सब बदल सकते हैं।', 'You can change everything later in Settings.']))],
       ok: () => true, save: null }),
   };

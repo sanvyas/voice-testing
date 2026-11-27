@@ -11,11 +11,22 @@ export async function render(root) {
   const [plan, voices, me] = await Promise.all([A('/plan'), A('/voices'), A('/me')]);
   const v = voices.voices.find((x) => x.id === voices.current) || voices.voices[0];
   const planSub = plan.status === 'cancelled' ? t(['रद्द किया', 'Cancelled']) : plan.status === 'trial' ? t([`14 दिन मुफ़्त · ${plan.days_left} दिन बाकी`, `14-day free trial · ${plan.days_left} days left`]) : t(['ट्रायल पूरा हुआ', 'Trial is over']);
+  const darkLabel = () => {
+    const theme = document.documentElement.getAttribute('data-theme');
+    return theme === 'dark' ? t(['डार्क · बदलें', 'Dark · tap to change']) : theme === 'light' ? t(['लाइट · बदलें', 'Light · tap to change']) : t(['ऑटो · बदलें', 'Auto · tap to change']);
+  };
+  const cycleTheme = () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'dark' ? 'light' : cur === 'light' ? null : 'dark';
+    if (next) { document.documentElement.setAttribute('data-theme', next); try { localStorage.setItem('munshi-theme', next); } catch {} }
+    else { document.documentElement.removeAttribute('data-theme'); try { localStorage.removeItem('munshi-theme'); } catch {} }
+  };
   const items = [
     [t(['प्लान और भुगतान', 'Plan and payment']), planSub, () => go('#/plan')],
     [t(['Munshi की आवाज़', "Munshi's voice"]), `${isHi() ? v.name_hi : v.name} · ${isHi() ? v.desc_hi : v.desc}`, () => go('#/voice?from=more')],
     [t(['दुकान का सेटअप', 'Shop setup']), t(['नाम, पता, समय, भाषा, कोड', 'Name, address, hours, languages, code']), () => go('#/setup')],
     [t(['ऐप की भाषा', 'App language']), t(['हिन्दी · बदलने के लिए छुएँ', 'English · tap to change']), () => setLang(isHi() ? 'en' : 'hi')],
+    [t(['डार्क मोड', 'Dark mode']), darkLabel(), () => { cycleTheme(); window.dispatchEvent(new HashChangeEvent('hashchange')); }],
   ];
   mount(root, h('div', { class: 'scroll' }, h('h1', { class: 'page-title' }, t(['सेटिंग', 'Settings'])),
     h('button', { class: 'try-card', onclick: () => go('#/try') }, h('div', { class: 'o' }, icon('phone', 26)), h('div', { style: 'flex:1' }, h('div', { style: 'font-size:18px;font-weight:700' }, t(['Munshi को आज़माएँ', 'Test your Munshi'])),

@@ -2,7 +2,7 @@
 import { h, mount } from '/lab/ui.js';
 import { A } from '../net.js';
 import { t, getLang, dayLabel, waitingFor, clock, initial } from '../i18n.js';
-import { icon, Logo, sheet, isOnline, setOnline } from '../kit.js';
+import { icon, Logo, sheet, isOnline, setOnline, toast, telLink } from '../kit.js';
 import { shell, setBadge, saveProfile, go, setupDone } from '../shell.js';
 
 const TABS = [['need', ['आपकी ज़रूरत', 'Needs you']], ['good', ['जानने लायक', 'Good to know']], ['spam', ['काम की नहीं', 'Not worth it']], ['all', ['सब', 'All']]];
@@ -42,6 +42,14 @@ export async function render(root, { query }) {
     const input = h('input', { value: q, placeholder: t(['नाम या बात खोजें', 'Search name or topic']), 'aria-label': t(['खोजें', 'Search']), oninput: (e) => { q = e.target.value; clearTimeout(timer); timer = setTimeout(fetchList, 250); } });
     mount(panel, open ? h('div', { class: 'filters' }, input, h('div', { class: 'ranges' }, ...RANGES.map(([k, l]) => h('button', { class: 'range' + (range === k ? ' on' : ''), onclick: () => { range = k; drawPanel(); fetchList(); } }, t(l))))) : null);
   }
+  function showActions(r) {
+    const phone = r.key && /^\d/.test(r.key) ? r.key : null;
+    sheet(r.name, (close) => [
+      phone ? h('button', { class: 'opt', onclick: () => { close(); location.href = telLink(phone); } }, h('i', {}, icon('phone')), t(['कॉल करें', 'Call back'])) : null,
+      h('button', { class: 'opt', onclick: () => { close(); go(`#/thread/${encodeURIComponent(r.key)}`); } }, h('i', {}, icon('chat')), t(['बातचीत देखें', 'View messages'])),
+      r.pending > 0 ? h('button', { class: 'opt', onclick: async () => { try { await A(`/people/${encodeURIComponent(r.key)}/done`, { method: 'POST' }); close(); await fetchList(); toast(t(['हो गया', 'Marked done'])); } catch (e) { toast(e.message, { bad: true }); } } }, h('i', {}, icon('check')), t(['सब हो गया', 'Mark all done'])) : null,
+    ].filter(Boolean));
+  }
   function drawList() {
     const rows = data ? data.rows : [];
     const sumText = !data ? '' : tab === 'need' ? (data.pending_calls ? t([`आज के ${data.pending_today} · पुराने ${data.pending_older}`, `${data.pending_today} today · ${data.pending_older} older`]) : '')
@@ -54,7 +62,13 @@ export async function render(root, { query }) {
     mount(list, empty ? h('div', { class: 'empty' }, h('div', { class: 'ring' }, icon('check', 32)), h('b', {}, none[0]), h('p', {}, none[1]))
       : h('div', { class: 'list' }, ...rows.map((r) => {
         const wait = r.pending > 0;
-        return h('button', { class: 'person' + (wait ? ' wait' : ''), onclick: () => go(`#/thread/${encodeURIComponent(r.key)}`) },
+        let pt = null;
+        return h('button', { class: 'person' + (wait ? ' wait' : ''),
+          onclick: () => go(`#/thread/${encodeURIComponent(r.key)}`),
+          oncontextmenu: (e) => { e.preventDefault(); showActions(r); },
+          ontouchstart: () => { pt = setTimeout(() => { pt = null; showActions(r); }, 500); },
+          ontouchend: () => { if (pt) clearTimeout(pt); },
+          ontouchmove: () => { if (pt) { clearTimeout(pt); pt = null; } } },
           h('div', { class: 'av' + (wait ? ' wait' : r.kind === 'good' ? ' good' : '') }, initial(r.name)),
           h('div', { class: 'pmain' }, h('div', { class: 'prow' }, h('div', { class: 'pname' }, r.name, r.calls > 1 ? h('span', { class: 'ncalls' }, t([`${r.calls} कॉल`, `${r.calls} calls`])) : null),
             h('span', { class: 'ptime' }, r.days_ago > 0 ? dayLabel(r.days_ago) : clock(r.at))),
@@ -63,7 +77,7 @@ export async function render(root, { query }) {
       })));
   }
   const foot = h('div', { class: 'foot' });
-  function drawFoot() { const d = data && data.today; mount(foot, d && d.handled ? t([`आज Munshi ने ${d.handled} कॉल संभालीं, ${d.orders} ऑर्डर नोट किए`, `Today Munshi handled ${d.handled} calls and noted ${d.orders} orders`]) : ''); }
+  function drawFoot() { const d = data && data.today; mount(foot, d && d.handled ? h('button', { class: 'link', style: 'font-size:13px;font-weight:500;color:var(--muted);min-height:auto;justify-content:center;width:100%', onclick: () => go('#/orders') }, t([`आज Munshi ने ${d.handled} कॉल संभालीं, ${d.orders} ऑर्डर नोट किए`, `Today Munshi handled ${d.handled} calls and noted ${d.orders} orders`])) : ''); }
 
   async function fetchList() {
     try {
@@ -79,5 +93,8 @@ export async function render(root, { query }) {
   mount(root, head, tabs, h('div', { class: 'scroll', style: 'padding-top:0' }, sum, panel, list, foot));
   drawHead(); drawTabs(); drawPanel(); drawList();
   await fetchList();
-  return () => { alive = false; clearTimeout(timer); };
+  // SSE: live-refresh when a new call comes in
+  let sse = null;
+  try { sse = new EventSource('/api/assistant/events'); sse.onmessage = () => { if (alive) fetchList(); }; sse.onerror = () => { sse?.close(); sse = null; }; } catch { /* SSE not available */ }
+  return () => { alive = false; clearTimeout(timer); sse?.close(); };
 }

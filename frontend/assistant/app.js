@@ -1,4 +1,5 @@
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+try { const t = localStorage.getItem('munshi-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch {}
 import { h, mount } from '/lab/ui.js';
 import { setBusinessKey, getBusinessKey, setUnauthorizedHandler } from '/lab/api.js';
 import { t, setLang, getLang } from './i18n.js';
@@ -17,10 +18,10 @@ setUnauthorizedHandler(() => import('./views/login.js').then((m) => m.showLogin(
 const ROUTES = {
   calls: () => import('./views/calls.js'), thread: () => import('./views/thread.js'), detail: () => import('./views/detail.js'), know: () => import('./views/know.js'),
   contacts: () => import('./views/contacts.js'), more: () => import('./views/more.js'), setup: () => import('./views/setup.js'), plan: () => import('./views/plan.js'),
-  voice: () => import('./views/voice.js'), try: () => import('./views/try.js'), start: () => import('./views/start.js'),
+  voice: () => import('./views/voice.js'), try: () => import('./views/try.js'), start: () => import('./views/start.js'), orders: () => import('./views/orders.js'),
 };
 const NAV = [['calls', ['कॉल', 'Calls'], 'phone'], ['know', ['जानकारी', 'Shop info'], 'book'], ['contacts', ['संपर्क', 'Contacts'], 'people'], ['more', ['सेटिंग', 'Settings'], 'more']];
-const FULL = new Set(['thread', 'detail', 'setup', 'plan', 'voice', 'try', 'start']);
+const FULL = new Set(['thread', 'detail', 'setup', 'plan', 'voice', 'try', 'start', 'orders']);
 const banner = document.getElementById('banner'); const view = document.getElementById('view'); const nav = document.getElementById('nav');
 let cleanup = null; let token = 0;
 
@@ -74,5 +75,21 @@ window.addEventListener('munshi-changed', refreshBadge);
   if (p && !p.onboarded && !(p.business_name && p.owner_name && p.business_name !== 'New business') && !location.hash.startsWith('#/start')) location.hash = '#/start';
   route();
   refreshBadge();
+  // Push notifications: subscribe if supported and backend has VAPID keys
+  if ('serviceWorker' in navigator && 'PushManager' in window) {
+    navigator.serviceWorker.ready.then(async (reg) => {
+      try {
+        const r = await fetch('/api/assistant/push/key'); const { key, enabled } = await r.json();
+        if (!enabled || !key) return;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          const pad = '='.repeat((4 - key.length % 4) % 4);
+          const raw = atob((key + pad).replace(/-/g, '+').replace(/_/g, '/'));
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from([...raw].map(c => c.charCodeAt(0))) });
+        }
+        await fetch('/api/assistant/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sub.toJSON()) });
+      } catch { /* push not available or denied */ }
+    }).catch(() => {});
+  }
 })();
 export { getLang, setLang };

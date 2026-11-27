@@ -13,9 +13,11 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import time
 from collections import OrderedDict
 from datetime import timedelta
+from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
 import hindi_speech
@@ -45,23 +47,67 @@ _background: set[asyncio.Task] = set()
 
 # --- short-lived audio that Plivo fetches with <Play> ----------------------------------
 
+_AUDIO_DIR = Path(tempfile.gettempdir()) / "munshi-audio"
+_AUDIO_DIR.mkdir(exist_ok=True)
+
+
 class AudioStore:
-    def __init__(self, ttl: int = 600, limit: int = 200):
-        self.ttl, self.limit, self._items = ttl, limit, OrderedDict()
+    """Filesystem-based audio store — works across multiple Gunicorn workers sharing the same container."""
+
+    def __init__(self, ttl: int = 600, maxsize: int = 512):
+        self.ttl = ttl
+        self.maxsize = maxsize
 
     def put(self, audio: bytes, mime: str) -> str:
-        key = secrets.token_hex(16)
-        self._items[key] = (audio, mime, time.monotonic() + self.ttl)
-        while len(self._items) > self.limit:
-            self._items.popitem(last=False)
+        self._cleanup()
+        key = secrets.token_urlsafe(12)
+        ext = ".wav" if "wav" in mime else ".mp3" if "mp3" in mime else ".ogg" if "ogg" in mime else ".raw"
+        path = _AUDIO_DIR / f"{key}{ext}"
+        path.write_bytes(audio)
+        path.with_suffix(ext + ".mime").write_text(mime)
         return key
 
     def get(self, key: str):
-        item = self._items.get(key)
-        if item and item[2] > time.monotonic():
-            return item[0], item[1]
-        self._items.pop(key, None)
+        for p in _AUDIO_DIR.glob(f"{key}.*"):
+            if str(p).endswith(".mime"):
+                continue
+            mime_path = Path(str(p) + ".mime")
+            mime = mime_path.read_text() if mime_path.exists() else "audio/mpeg"
+            try:
+                age = time.time() - p.stat().st_mtime
+            except OSError:
+                return None
+            if age > self.ttl:
+                p.unlink(missing_ok=True)
+                mime_path.unlink(missing_ok=True)
+                return None
+            return p.read_bytes(), mime
         return None
+
+    def clear(self):
+        try:
+            for p in list(_AUDIO_DIR.iterdir()):
+                p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _cleanup(self):
+        try:
+            now = time.time()
+            for p in list(_AUDIO_DIR.iterdir()):
+                try:
+                    if now - p.stat().st_mtime > self.ttl:
+                        p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            remaining = [p for p in _AUDIO_DIR.iterdir() if not str(p).endswith(".mime")]
+            if len(remaining) > self.maxsize:
+                remaining.sort(key=lambda p: p.stat().st_mtime)
+                for old in remaining[: len(remaining) - self.maxsize]:
+                    old.unlink(missing_ok=True)
+                    Path(str(old) + ".mime").unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 audio_store = AudioStore()
@@ -120,16 +166,16 @@ async def speak_xml(text: str, language: str, request: Request, call_id: str | N
                 _last_tts_ms[call_id or ""] = 0
             else:
                 await run_db(lambda s: settings_store.tts_check_cap(s, engine, len(clean)))
-                speech = await tts.synthesize(engine, text, language, phone=True, lexicon=await lexicon.current(), voice_id=voice_id)
+                speech = await tts.synthesize_with_fallback(text, language, preferred=engine, phone=True, lexicon=await lexicon.current(), voice_id=voice_id)
                 _last_tts_ms[call_id or ""] = speech.latency_ms
-                await run_db(lambda s: (settings_store.tts_record(s, engine, speech.chars, speech.cost_usd), call_id and service.note_spoken(s, call_id, speech.chars, engine)))
+                await run_db(lambda s: (settings_store.tts_record(s, speech.engine, speech.chars, speech.cost_usd), call_id and service.note_spoken(s, call_id, speech.chars, speech.engine)))
                 if len(clean) <= _PHRASE_MAX_CHARS:
                     _PHRASES[cache_key] = speech
                     while len(_PHRASES) > _PHRASE_KEEP:
                         _PHRASES.popitem(last=False)
             return f"<Play>{escape(base_url(request))}/telephony/audio/{audio_store.put(speech.audio, speech.mime)}.mp3</Play>"
         except (tts.TTSError, ServiceError) as exc:
-            logger.warning("server voice failed, using Plivo's voice: %s", exc)
+            logger.warning("all server voices failed, using Plivo's voice: %s", exc)
     return f"<Speak>{escape(tts.clean_text(text))}</Speak>"
 
 
@@ -299,14 +345,27 @@ async def _turn(request: Request, call: str, form: dict):
         return xml(await speak_xml("Sorry, I could not hear that. Could you say it again?", lang, request, call), record_xml(request, call))
 
     t0 = time.perf_counter()
+    record_url = form.get("RecordUrl", "")
     try:
-        audio = await _download(form.get("RecordUrl", ""))
+        audio = await _download(record_url)
         t_download = time.perf_counter()
         heard = await llm.transcribe(audio, "speech.mp3", "audio/mpeg", language=None, retries=1, prompt=lexicon.stt_prompt(await lexicon.current(), profile)) if len(audio) > 1500 else None
         t_stt = time.perf_counter()
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not transcribe the recording: %s", exc)
         return await silence()
+    if record_url:
+        async def _save_recording_url():
+            def _do(session):
+                row = session.scalar(select(Call).where(Call.id == call, Call.business_id == tenant.current()))
+                if row:
+                    meta = dict(row.meta or {})
+                    urls = meta.get("recording_urls") or []
+                    urls.append(record_url)
+                    meta["recording_urls"] = urls[-20:]
+                    row.meta = meta
+            await run_db(_do)
+        _spawn(_save_recording_url())
     task = asyncio.create_task(_forget_recording(form.get("RecordingID", "")))
     _FORGETTING.add(task)
     task.add_done_callback(_FORGETTING.discard)

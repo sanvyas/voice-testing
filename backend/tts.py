@@ -177,6 +177,26 @@ def edge_voice(language: str, voice_id: str | None = None) -> tuple[str, str, st
     return entry or EDGE_FALLBACK.get(gender, EDGE_FALLBACK["F"])
 
 
+async def synthesize_with_fallback(text: str, language: str, preferred: str | None = None, **kwargs) -> Speech:
+    """Try engines in order: preferred → edge → google → chatterbox. Raise TTSError only if all fail."""
+    order = []
+    if preferred and preferred in ENGINES:
+        order.append(preferred)
+    for e in ("edge", "google", "chatterbox"):
+        if e not in order:
+            order.append(e)
+    errors = []
+    for engine in order:
+        k, _ = key_for(engine)
+        if not k:
+            continue
+        try:
+            return await synthesize(engine, text, language, **kwargs)
+        except Exception as exc:
+            errors.append(f"{engine}: {exc}")
+    raise TTSError("All TTS engines failed: " + "; ".join(errors))
+
+
 async def synthesize(engine: str, text: str, language: str, *, phone: bool = False, lexicon: list | None = None, voice_id: str | None = None) -> Speech:
     if engine not in ENGINES:
         raise TTSError("This voice is played by your device, not the server.")

@@ -265,7 +265,7 @@ def signed(client, path, form, query="", token=TOKEN, nonce="n0nce123"):
 def line(client, ai):
     profile(client, owner_phone="9811111111")
     client.put(f"{API}/phone", json={"auth_id": "MAXXXX", "auth_token": TOKEN, "number": "+918047112233"})
-    phone.audio_store._items.clear()
+    phone.audio_store.clear()
     return client
 
 

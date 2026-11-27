@@ -1,6 +1,8 @@
 """The product's HTTP API, mounted at /api/assistant (behind the same access control as the lab)."""
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 
 import llm
@@ -9,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFi
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.responses import StreamingResponse
 
 from lab import settings_store
 from lab.db import get_session
@@ -17,9 +20,20 @@ from lab.runner import run_db
 from lab.schemas import Strict
 from lab.service import ServiceError, get_or_404, iso
 
-from . import board, config, costs, integrations, lexicon, people, prompts, service, tenant, translate, vision, voices, whatsapp
+from . import board, config, costs, integrations, lexicon, people, prompts, push, service, tenant, translate, vision, voices, whatsapp
 from .access import admin_only, scope, throttle
 from .integrations import whatsapp_enabled
+
+# --- SSE pub/sub for real-time call feed ---
+_call_listeners: dict[int, list[asyncio.Queue]] = {}
+
+
+def notify_call(business_id: int, event: dict):
+    for q in _call_listeners.get(business_id, []):
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
 
 router = APIRouter(dependencies=[Depends(scope)])
 ADMIN = [Depends(admin_only)]  # platform-level settings an owner never sees
@@ -229,6 +243,51 @@ async def voice_sample(body: VoiceSampleIn, session: Session = Depends(get_sessi
     speech = await tts.synthesize(engine, text, body.language, voice_id=voice_id, lexicon=await lexicon.current())
     await run_db(lambda s: settings_store.tts_record(s, engine, speech.chars, speech.cost_usd))
     return Response(content=speech.audio, media_type=speech.mime)
+
+
+@router.get("/events")
+async def call_events(request: Request, session: Session = Depends(get_session)):
+    """SSE stream of real-time call events for this business."""
+    bid = tenant.current()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _call_listeners.setdefault(bid, []).append(queue)
+
+    async def stream():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            listeners = _call_listeners.get(bid, [])
+            if queue in listeners:
+                listeners.remove(queue)
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/push/key")
+def push_public_key():
+    return {"key": push.public_key(), "enabled": push.configured()}
+
+
+class PushSubscribeIn(Strict):
+    endpoint: str = Field(min_length=1, max_length=2000)
+    keys: dict = Field(default_factory=dict)
+
+
+@router.post("/push/subscribe")
+def push_subscribe(body: dict, session: Session = Depends(get_session)):
+    subs = settings_store.get(session, "push_subscriptions", []) or []
+    endpoint = body.get("endpoint", "")
+    subs = [s for s in subs if s.get("endpoint") != endpoint]
+    subs.append(body)
+    settings_store.put(session, "push_subscriptions", subs[-10:])
+    return {"ok": True}
 
 
 @router.get("/stats")
@@ -561,6 +620,15 @@ def update_action(call_id: str, action_id: str, body: ActionUpdate, session: Ses
         call.reviewed = True
     session.flush()
     return {"action_items": items, "reviewed": call.reviewed}
+
+
+@router.get("/calls/{call_id}/recording")
+def call_recording(call_id: str, session: Session = Depends(get_session)):
+    call = _mine(session, Call, call_id, "Call")
+    urls = (call.meta or {}).get("recording_urls") or []
+    if not urls:
+        raise ServiceError("No recording available", 404)
+    return {"urls": urls}
 
 
 @router.delete("/calls/{call_id}", status_code=204)

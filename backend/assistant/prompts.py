@@ -39,6 +39,7 @@ VARIABLES = {
     "mode": ("How this business handles missed calls: reply, message or board", ("assistant",)),
     "caller_name": ("The caller's name if already known (saved contact)", ("assistant",)),
     "caller_number": ("The number the caller is calling from", ("assistant",)),
+    "caller_history": ("What this caller asked in past calls", ("assistant",)),
     "today": ("Today's date", ("assistant", "summary")),
     "local_words": ("Local words the platform or the owner explained, one per line (word = meaning)", ("assistant",)),
     "self_forms": ("Which verb forms the AI uses about itself in Hindi, to match the voice (feminine or masculine)", ("assistant",)),
@@ -63,7 +64,7 @@ HOW YOU TALK (this is a phone call; every extra word is waiting time)
 - Say each reply once, as ONE short message. Repeat only what the caller actually said: never add a time, quantity, price or detail they did not give.
 
 TAKING AN ORDER OR A MESSAGE
-1. The caller's name (already known? {{caller_name}}).
+1. The caller's name (already known? {{caller_name}}). Past calls from this number: {{caller_history}}
 2. What they need: items and quantities, or their question.
 3. For an order: delivery or pickup, and when, unless they have already said it.
 4. Only when you have the name and what they need, confirm it in one sentence and end the call (the rules below say how). Never end the call in a message that asks for something. Ask at most three questions in a call.
@@ -182,13 +183,14 @@ def _self_forms(profile: dict | None = None) -> str:
     return "feminine (मैं बोल रही हूँ, मैं बता दूँगी)" if voices.gender_of((profile or {}).get("voice")) == "F" else "masculine (मैं बोल रहा हूँ, मैं बता दूँगा)"
 
 
-def values_for(profile: dict, items=(), *, caller_name: str = "", caller_number: str = "", today: str = "", local_words: str = "") -> dict[str, str]:
+def values_for(profile: dict, items=(), *, caller_name: str = "", caller_number: str = "", caller_history: str = "", today: str = "", local_words: str = "") -> dict[str, str]:
     owner, business = profile.get("owner_name") or "the owner", profile.get("business_name") or "the business"
     return {
         "business_name": business, "owner_name": owner, "about": profile.get("about", ""), "address": profile.get("address", ""), "hours": profile.get("hours", ""),
         "languages": ", ".join(LANGUAGE_NAMES.get(c, c) for c in (profile.get("languages") or ["en"])), "faq": profile.get("faq", ""), "rules": profile.get("rules", ""),
         "board": board_block(profile, items), "knowledge": knowledge_block(profile, items), "mode": profile.get("mode", "message"),
-        "caller_name": caller_name, "caller_number": caller_number, "today": today, "local_words": local_words or "(none listed)", "self_forms": _self_forms(profile),
+        "caller_name": caller_name, "caller_number": caller_number, "caller_history": caller_history or "(first call)", "today": today,
+        "local_words": local_words or "(none listed)", "self_forms": _self_forms(profile),
     }
 
 
@@ -201,8 +203,8 @@ def greeting(profile: dict, template: str = "") -> str:
     return fill(text, values_for(profile)).strip()
 
 
-def receptionist_prompt(profile: dict, items=(), template: str = "", *, caller_name: str = "", caller_number: str = "", today: str = "", local_words: str = "") -> str:
-    values = values_for(profile, items, caller_name=caller_name, caller_number=caller_number, today=today, local_words=local_words)
+def receptionist_prompt(profile: dict, items=(), template: str = "", *, caller_name: str = "", caller_number: str = "", caller_history: str = "", today: str = "", local_words: str = "") -> str:
+    values = values_for(profile, items, caller_name=caller_name, caller_number=caller_number, caller_history=caller_history, today=today, local_words=local_words)
     return fill(template.strip() or DEFAULT_ASSISTANT, values).rstrip() + "\n\n" + fill(LOCKED_ASSISTANT, values)
 
 

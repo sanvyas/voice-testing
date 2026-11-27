@@ -57,17 +57,38 @@ export async function render(root) {
       return [name, price, tog, h('button', { class: 'primary', onclick: go }, t(['सेव करें', 'Save'])), removeBtn(close, r.name, () => A(`/board/${r.id}`, { method: 'DELETE' }))];
     });
   }
+  function micBtn(target) {
+    if (!canRecord) return null;
+    let recording = false;
+    const btn = h('button', { class: 'mic', type: 'button', 'aria-label': t(['बोलें', 'Speak']), onclick: async () => {
+      if (recording) { listener.cancel(); return; }
+      recording = true; btn.classList.add('rec');
+      const got = await listener.listen({ silenceMs: 1600, waitMs: 9000 });
+      recording = false; btn.classList.remove('rec');
+      if (!got) return toast(t(['सुनाई नहीं दिया', 'Did not catch that']), { bad: true });
+      try {
+        const fd = new FormData(); fd.append('file', got.blob, FILE(got.blob)); fd.append('language', getLang() === 'hi' ? 'hi-IN' : 'en-IN');
+        const r = await apiForm('/transcribe', fd);
+        if (!r.text) return toast(t(['सुनाई नहीं दिया', 'Did not catch that']), { bad: true });
+        target.value = target.value ? target.value + ' ' + r.text : r.text;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        toast(t(['लिख दिया', 'Transcribed']));
+      } catch (e) { toast(e.message, { bad: true }); }
+    } }, icon('mic', 22));
+    return btn;
+  }
   function editFact(f) {
     sheet(headName(f), (close) => {
       const isOther = f.field === 'other';
       const title = isOther ? h('input', { value: f.name === 'Other' ? '' : f.name, maxlength: 40, placeholder: t(['शीर्षक (जैसे: पार्किंग)', 'Heading (e.g. Parking)']), 'aria-label': t(['शीर्षक', 'Heading']) }) : null;
       const area = h('textarea', { rows: 4, maxlength: LIMIT[f.field] || 700, 'aria-label': t(['जानकारी', 'Information']) }, f.text);
+      const mic = micBtn(area);
       const go = async () => {
         if (!area.value.trim()) return toast(t(['जानकारी लिखें', 'Write the information']), { bad: true });
         try { await A(`/shop/fact/${encodeURIComponent(f.id)}`, { method: 'PUT', body: { text: area.value.trim(), title: isOther ? title.value.trim() : undefined } }); close(); toast(t(['सेव हो गया', 'Saved'])); await refresh(); }
         catch (e) { toast(e.message, { bad: true }); }
       };
-      return [title, area, h('button', { class: 'primary', onclick: go }, t(['सेव करें', 'Save'])), removeBtn(close, headName(f), () => A(`/shop/fact/${encodeURIComponent(f.id)}`, { method: 'DELETE' }))];
+      return [title, area, mic ? h('div', { style: 'display:flex;align-items:center;gap:8px' }, mic, h('span', { style: 'font-size:13px;color:var(--muted)' }, t(['बोलकर भी लिखें', 'Or say it']))) : null, h('button', { class: 'primary', onclick: go }, t(['सेव करें', 'Save'])), removeBtn(close, headName(f), () => A(`/shop/fact/${encodeURIComponent(f.id)}`, { method: 'DELETE' }))];
     });
   }
 
@@ -103,8 +124,9 @@ export async function render(root) {
           close(); toast(t(['जानकारी सेव हुई', 'Knowledge saved'])); await refresh();
         } catch (e) { toast(e.message, { bad: true }); }
       };
+      const mic = micBtn(area);
       paint();
-      return [h('p', {}, t(['पहले शीर्षक चुनें, फिर लिखें।', 'Pick a heading first, then write it.'])), chips, fields, h('button', { class: 'primary', onclick: go }, t(['सेव करें', 'Save']))];
+      return [h('p', {}, t(['पहले शीर्षक चुनें, फिर लिखें।', 'Pick a heading first, then write it.'])), chips, fields, mic ? h('div', { style: 'display:flex;align-items:center;gap:8px' }, mic, h('span', { style: 'font-size:13px;color:var(--muted)' }, t(['बोलकर भी लिखें', 'Or say it']))) : null, h('button', { class: 'primary', onclick: go }, t(['सेव करें', 'Save']))];
     });
   }
   async function confirm(id) { try { shop = await A('/shop/confirm', { method: 'POST', body: { id } }); toast(t(['पक्का किया', 'Confirmed'])); draw(); } catch (e) { toast(e.message, { bad: true }); } }

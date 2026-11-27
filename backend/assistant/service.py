@@ -165,6 +165,18 @@ def find_contact(session: Session, number: str) -> Contact | None:
     return session.scalar(select(Contact).where(Contact.business_id == tenant.current(), Contact.phone == n)) if n else None
 
 
+def caller_history(session: Session, caller_number: str, limit: int = 5) -> list[dict]:
+    """Return the last ``limit`` finished calls from this number, newest first."""
+    n = normalize_phone(caller_number) if caller_number else ""
+    if not n:
+        return []
+    rows = session.scalars(
+        select(Call).where(Call.business_id == tenant.current(), Call.caller_number == n, Call.status == "done")
+        .order_by(Call.started_at.desc()).limit(limit)
+    ).all()
+    return [{"summary": c.summary, "category": c.category, "date": iso(c.started_at)} for c in rows if c.summary]
+
+
 # --- calls --------------------------------------------------------------------------
 
 def call_summary(c: Call, turns: int | None = None, notes: int | None = None) -> dict:
@@ -264,8 +276,10 @@ async def run_turn(call_id: str, said: str, audio_seconds: float = 0.0) -> dict:
         if call.status != "live" or call.handled_by != "assistant":
             raise ServiceError("This call has ended.", 409)
         profile = get_profile(session)
+        history_lines = caller_history(session, call.caller_number)
+        history_text = "; ".join(f"{h['date'][:10]}: {h['summary']}" for h in history_lines) if history_lines else ""
         system = prompts.receptionist_prompt(profile, board.shareable(session), config.resolve(session, "assistant"), caller_name=call.caller_name, caller_number=call.caller_number,
-                                             today=utcnow().strftime("%d %B %Y"), local_words=lexicon.local_words_block(lexicon.effective(session)))
+                                             caller_history=history_text, today=utcnow().strftime("%d %B %Y"), local_words=lexicon.local_words_block(lexicon.effective(session)))
         return system, _history(call), len(call.turns)
 
     system, history, count = await run_db(prepare)
@@ -506,6 +520,14 @@ async def finish_call(call_id: str, duration_s: int | None = None) -> dict:
     from . import translate  # the owner's language, ready before they open the call
     if detail.get("importance") != "ignore":  # spam and silence are translated only if the owner ever opens them
         await translate.ensure([call_id], (await run_db(lambda s: get_profile(s))).get("ui_lang", "hi"))
+    from .router import notify_call
+    from . import push
+    biz_id = await run_db(lambda s: tenant.current())
+    compact = {k: detail[k] for k in ("id", "caller_name", "caller_number", "summary", "importance", "category", "started_at") if k in detail}
+    notify_call(biz_id, {"type": "call_complete", "call": compact})
+    if detail.get("importance") == "action":
+        name = detail.get("caller_name") or detail.get("caller_number") or "Someone"
+        await push.notify_owner(biz_id, f"Munshi: {name} called", detail.get("summary", "")[:100])
     return detail
 
 
