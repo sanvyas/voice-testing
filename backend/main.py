@@ -93,7 +93,7 @@ async def assetlinks():
     return JSONResponse([{
         "relation": ["delegate_permission/common.handle_all_urls"],
         "target": {"namespace": "android_app", "package_name": "app.munshi.owner",
-                    "sha256_cert_fingerprints": [os.getenv("MUNSHI_APK_SHA256", "1C:BA:B4:5B:52:3D:2E:9D:72:F7:8D:91:9A:CA:5B:7A:DB:CB:F1:5D:4F:D7:F2:E5:C7:E2:C2:61:E4:0C:65:73")]}
+                    "sha256_cert_fingerprints": [os.getenv("MUNSHI_APK_SHA256", "74:80:AA:CA:45:73:3F:29:87:CF:60:91:6D:EB:E8:1C:3E:74:EA:0C:CB:71:06:D2:4A:02:54:19:5E:1A:E5:3A")]}
     }])
 
 
