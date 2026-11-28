@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -29,15 +31,19 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK as artifact
         uses: actions/upload-artifact@v4
         with:
           name: munshi-apk
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Create release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: latest
+          name: "Munshi APK (latest)"
+          body: "Latest Munshi Android APK — download and install on your phone. Built from commit ${{ github.sha }}"
+          prerelease: true
           files: android/app/build/outputs/apk/release/*.apk
+          make_latest: false
