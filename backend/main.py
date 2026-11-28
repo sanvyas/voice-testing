@@ -86,6 +86,17 @@ async def home():
     return FileResponse(index_file, media_type="text/html")
 
 
+@app.get("/.well-known/assetlinks.json", include_in_schema=False)
+async def assetlinks():
+    """Digital Asset Links for the Android TWA app."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse([{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {"namespace": "android_app", "package_name": "app.munshi.owner",
+                    "sha256_cert_fingerprints": [os.getenv("MUNSHI_APK_SHA256", "1C:BA:B4:5B:52:3D:2E:9D:72:F7:8D:91:9A:CA:5B:7A:DB:CB:F1:5D:4F:D7:F2:E5:C7:E2:C2:61:E4:0C:65:73")]}
+    }])
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.munshi.owner'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "app.munshi.owner"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+
+        // Digital Asset Links: the host that the TWA opens
+        manifestPlaceholders = [
+            hostName      : "munshi-r3ws.onrender.com",
+            defaultUrl    : "https://munshi-r3ws.onrender.com/assistant/",
+            launcherName  : "Munshi",
+            assetStatements: '[{"relation": ["delegate_permission/common.handle_all_urls"],' +
+                             ' "target": {"namespace": "web", "site": "https://munshi-r3ws.onrender.com"}}]'
+        ]
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("../munshi-release.keystore")
+            storePassword System.getenv("KEYSTORE_PASSWORD") ?: "munshi2026"
+            keyAlias "munshi"
+            keyPassword System.getenv("KEY_PASSWORD") ?: "munshi2026"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}

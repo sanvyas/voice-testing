@@ -1,0 +1,41 @@
+name: Build Munshi APK
+
+on:
+  push:
+    branches: [munshi]
+    paths: ['android/**', '.github/workflows/build-apk.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew 2>/dev/null || gradle wrapper
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: munshi-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Create release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/app-release.apk
